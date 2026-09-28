@@ -1,0 +1,140 @@
+[gd_scene load_steps=14 format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="1_player"]
+
+[sub_resource type="Environment" id="Environment_arena"]
+background_mode = 1
+background_color = Color(0.12, 0.16, 0.22, 1)
+ambient_light_source = 3
+ambient_light_color = Color(0.76, 0.83, 0.95, 1)
+ambient_light_energy = 0.65
+reflected_light_source = 2
+
+[sub_resource type="StandardMaterial3D" id="Material_floor"]
+albedo_color = Color(0.32, 0.37, 0.4, 1)
+roughness = 1.0
+
+[sub_resource type="StandardMaterial3D" id="Material_wall"]
+albedo_color = Color(0.19, 0.24, 0.3, 1)
+roughness = 1.0
+
+[sub_resource type="StandardMaterial3D" id="Material_block"]
+albedo_color = Color(0.27, 0.48, 0.53, 1)
+roughness = 1.0
+
+[sub_resource type="BoxMesh" id="Mesh_floor"]
+material = SubResource("Material_floor")
+size = Vector3(26, 1, 26)
+
+[sub_resource type="BoxShape3D" id="Shape_floor"]
+size = Vector3(26, 1, 26)
+
+[sub_resource type="BoxMesh" id="Mesh_wall_x"]
+material = SubResource("Material_wall")
+size = Vector3(26, 3, 1)
+
+[sub_resource type="BoxShape3D" id="Shape_wall_x"]
+size = Vector3(26, 3, 1)
+
+[sub_resource type="BoxMesh" id="Mesh_wall_z"]
+material = SubResource("Material_wall")
+size = Vector3(1, 3, 24)
+
+[sub_resource type="BoxShape3D" id="Shape_wall_z"]
+size = Vector3(1, 3, 24)
+
+[sub_resource type="BoxMesh" id="Mesh_block"]
+material = SubResource("Material_block")
+size = Vector3(2, 2, 2)
+
+[sub_resource type="BoxShape3D" id="Shape_block"]
+size = Vector3(2, 2, 2)
+
+[node name="TestArena" type="Node3D"]
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_arena")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation = Vector3(-0.95, -0.6, 0)
+light_color = Color(1, 0.94, 0.83, 1)
+light_energy = 1.1
+shadow_enabled = true
+directional_shadow_max_distance = 40.0
+
+[node name="Geometry" type="Node3D" parent="."]
+
+[node name="Floor" type="StaticBody3D" parent="Geometry"]
+position = Vector3(0, -0.5, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/Floor"]
+mesh = SubResource("Mesh_floor")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/Floor"]
+shape = SubResource("Shape_floor")
+
+[node name="NorthWall" type="StaticBody3D" parent="Geometry"]
+position = Vector3(0, 1.5, -12.5)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/NorthWall"]
+mesh = SubResource("Mesh_wall_x")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/NorthWall"]
+shape = SubResource("Shape_wall_x")
+
+[node name="SouthWall" type="StaticBody3D" parent="Geometry"]
+position = Vector3(0, 1.5, 12.5)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/SouthWall"]
+mesh = SubResource("Mesh_wall_x")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/SouthWall"]
+shape = SubResource("Shape_wall_x")
+
+[node name="WestWall" type="StaticBody3D" parent="Geometry"]
+position = Vector3(-12.5, 1.5, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/WestWall"]
+mesh = SubResource("Mesh_wall_z")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/WestWall"]
+shape = SubResource("Shape_wall_z")
+
+[node name="EastWall" type="StaticBody3D" parent="Geometry"]
+position = Vector3(12.5, 1.5, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/EastWall"]
+mesh = SubResource("Mesh_wall_z")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/EastWall"]
+shape = SubResource("Shape_wall_z")
+
+[node name="BlockA" type="StaticBody3D" parent="Geometry"]
+position = Vector3(-4, 1, -3)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/BlockA"]
+mesh = SubResource("Mesh_block")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/BlockA"]
+shape = SubResource("Shape_block")
+
+[node name="BlockB" type="StaticBody3D" parent="Geometry"]
+position = Vector3(4, 1, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/BlockB"]
+mesh = SubResource("Mesh_block")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/BlockB"]
+shape = SubResource("Shape_block")
+
+[node name="BlockC" type="StaticBody3D" parent="Geometry"]
+position = Vector3(2, 1, -6)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/BlockC"]
+mesh = SubResource("Mesh_block")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/BlockC"]
+shape = SubResource("Shape_block")
+
+[node name="Player" parent="." instance=ExtResource("1_player")]
+position = Vector3(0, 0.5, 5)
