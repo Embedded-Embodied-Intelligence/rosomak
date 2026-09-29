@@ -74,6 +74,25 @@ func _build_sounds() -> void:
 	_streams[&"wave"] = _chime([392.0, 523.25], 0.7)
 	_streams[&"clear"] = _chime([523.25, 659.25, 783.99], 0.9)
 	_streams[&"game_over"] = _chime([392.0, 311.13, 261.63], 1.1)
+	_streams[&"door_open"] = _render(0.55, func(t: float, p: float) -> float:
+		var grind := sin(TAU * t * lerpf(90.0, 40.0, p)) * (1.0 - p)
+		return grind * 0.35 + randf_range(-1.0, 1.0) * exp(-t * 8.0) * 0.25
+	)
+	_streams[&"power_fail"] = _render(0.7, func(t: float, p: float) -> float:
+		var drop := sin(TAU * t * lerpf(200.0, 40.0, p)) * pow(1.0 - p, 0.6)
+		return drop * 0.45 + randf_range(-1.0, 1.0) * exp(-t * 12.0) * 0.35
+	)
+	_streams[&"glass"] = _render(0.35, func(t: float, p: float) -> float:
+		return randf_range(-1.0, 1.0) * exp(-t * 18.0) * 0.7 + sin(TAU * t * 2400.0) * exp(-t * 40.0) * 0.3
+	)
+	_streams[&"alarm"] = _render(0.9, func(t: float, p: float) -> float:
+		var siren := sin(TAU * t * lerpf(680.0, 920.0, absf(sin(PI * p * 2.0))))
+		return siren * 0.22 * sin(PI * p)
+	)
+	_streams[&"spark"] = _render(0.12, func(t: float, p: float) -> float:
+		return randf_range(-1.0, 1.0) * exp(-t * 55.0) * 0.8
+	)
+	_streams[&"mission_complete"] = _chime([523.25, 659.25, 783.99, 1046.5], 1.4)
 
 
 func _chime(notes: Array, duration: float) -> AudioStreamWAV:

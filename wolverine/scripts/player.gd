@@ -314,6 +314,31 @@ func add_rage(amount: float) -> void:
 	rage_changed.emit(rage, false)
 
 
+## Session checkpoint revive — restores combat readiness without reloading the scene.
+func revive(full_health: bool = true) -> void:
+	if full_health:
+		health = max_health
+	rage_left = 0.0
+	grace_left = 0.9
+	since_damage = 0.0
+	hit_chain = 0
+	hit_stop_left = 0.0
+	knockback_velocity = Vector2.ZERO
+	lunge_velocity = Vector3.ZERO
+	combo_queued = false
+	heavy_attack = false
+	controls_enabled = true
+	hurtbox.enabled = true
+	hurtbox.collision_layer = 32
+	collision_layer = 2
+	collision_mask = 1
+	velocity = Vector3.ZERO
+	_set_state(State.IDLE, true)
+	_emit_health()
+	rage_changed.emit(rage, false)
+	hit_chain_changed.emit(0)
+
+
 func _current_move() -> Dictionary:
 	return HEAVY_ATTACK if heavy_attack else LIGHT_COMBO[combo_step]
 

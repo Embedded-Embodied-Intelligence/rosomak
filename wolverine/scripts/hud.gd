@@ -173,10 +173,6 @@ func flash_hurt(_damage: int) -> void:
 	_hurt = 0.8
 
 
-func set_wave(wave: int) -> void:
-	_wave_label.text = "ARENA" if wave <= 1 else "FALA %d" % wave
-
-
 func set_counts(remaining: int, kills: int) -> void:
 	_enemies_label.text = "Wrogowie: %d" % remaining
 	_kills_label.text = "Pokonani: %d" % kills
@@ -229,6 +225,50 @@ func show_game_over(kills: int) -> void:
 		"A / Enter — Restart · B / Esc — Exit",
 		96
 	)
+
+
+func set_mission_labels(enabled: bool) -> void:
+	## Mission mode uses objective presenter for goals; keep vitals, hide arena wave chrome until combat.
+	if not enabled:
+		return
+	_wave_label.text = "PROJECT CLAW"
+	_enemies_label.text = ""
+	_kills_label.text = ""
+
+
+func set_section(section: String) -> void:
+	_wave_label.text = section
+
+
+func show_mission_death() -> void:
+	banner(
+		"YOU DIED",
+		"Restoring checkpoint…",
+		0.0,
+		"A / Enter — Skip wait",
+		96
+	)
+
+
+func show_mission_complete(kills: int, time_text: String) -> void:
+	banner(
+		"MISSION COMPLETE",
+		"Hostiles down: %d · Time %s" % [kills, time_text],
+		0.0,
+		"A / Enter — Replay · B / Esc — Exit",
+		88
+	)
+
+
+func clear_banner() -> void:
+	if _banner_tween:
+		_banner_tween.kill()
+	_banner_box.modulate.a = 0.0
+	_banner_hint.visible = false
+
+
+func set_wave(wave: int) -> void:
+	_wave_label.text = "ARENA" if wave <= 1 else "FALA %d" % wave
 
 
 func _label(text: String, size: int, color: Color = Color.WHITE, align := HORIZONTAL_ALIGNMENT_LEFT) -> Label:
