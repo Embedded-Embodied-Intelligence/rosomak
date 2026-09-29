@@ -23,11 +23,25 @@ var _collision: CollisionShape3D
 
 
 func _ready() -> void:
+	_ensure_visuals()
+	if state == State.LOCKED and start_locked:
+		_apply_pose(0.0)
+		_set_blocking(true)
+	elif state == State.OPEN or not start_locked:
+		# Preserve force_open called before deferred _ready.
+		if state != State.OPEN and not start_locked:
+			state = State.OPEN
+		_apply_pose(1.0 if state == State.OPEN else 0.0)
+		_set_blocking(state != State.OPEN)
+
+
+func configure() -> void:
 	_rest_position = position
 	_ensure_visuals()
 	state = State.LOCKED if start_locked else State.OPEN
 	_apply_pose(1.0 if state == State.OPEN else 0.0)
 	_set_blocking(state != State.OPEN)
+
 
 
 func _ensure_visuals() -> void:

@@ -80,19 +80,8 @@ func restore(checkpoint_id: StringName = &"") -> void:
 
 	_player.health = float(data.get("player_health", _player.max_health))
 	_player.rage = float(data.get("player_rage", 0.0))
-	_player.rage_left = 0.0
-	_player.grace_left = 0.8
-	_player.since_damage = 0.0
-	_player.hit_chain = 0
-	_player.controls_enabled = true
-	if _player.state == Player.State.DEAD:
-		_player.state = Player.State.IDLE
-		_player.state_time = 0.0
-		_player.hurtbox.enabled = true
-		_player.hurtbox.collision_layer = 32
-		_player.set_deferred("collision_layer", 2)
-		_player.set_deferred("collision_mask", 1)
-		_player.animator.play(&"idle")
+	_player.revive(false)
+	_player.health = float(data.get("player_health", _player.max_health))
 	_player._emit_health()
 	_player.rage_changed.emit(_player.rage, false)
 	_player.global_position = data.get("player_position", _player.global_position)

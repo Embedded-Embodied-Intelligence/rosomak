@@ -62,6 +62,8 @@ func begin_encounter(encounter_id: StringName, waves: Array, max_active_override
 	## type: &"grunt" | &"runner" | &"brute"
 	_active_encounter = encounter_id
 	_alive_by_encounter[encounter_id] = 0
+	if mission:
+		mission.encounter_alive[encounter_id] = 0
 	if max_active_override > 0:
 		max_active = max_active_override
 	Enemy.max_attackers = default_max_attackers
