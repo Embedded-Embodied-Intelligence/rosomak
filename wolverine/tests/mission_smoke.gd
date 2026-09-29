@@ -189,7 +189,7 @@ func _run() -> void:
 	# Checkpoint capture + death restore.
 	mission_scene.checkpoints.capture(CheckpointSystem.ID_AFTER_E1)
 	mission_scene.player.health = 0.0
-	mission_scene.player._on_hurt(999, Vector3.ZERO, 0.05, 0.0)
+	mission_scene.player._on_hurt(HitEvent.legacy(999, Vector3.ZERO, 0.05, 0.0))
 	await _frames(5)
 	_check(mission_scene._ui_mode == MissionGame.UiMode.DEATH, "death enters YOU DIED mode")
 	mission_scene._restore_now()

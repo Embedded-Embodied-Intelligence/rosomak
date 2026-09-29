@@ -109,8 +109,8 @@ func _run() -> void:
 	await _frames(10)
 	_check(enemy.health == 100 and not player.attack_hitbox.active, "windup cannot damage an overlapping enemy")
 	await _wait_for_hit()
-	_check(landed == 1 and enemy.health == 75, "first connection deals exactly 25 HP once")
-	_check(player.state_time >= 0.25 and player.state_time < 0.35, "damage occurs only in the active window")
+	_check(landed == 1 and enemy.health == 80, "first connection deals exactly 20 HP once")
+	_check(player.state_time >= 0.18 and player.state_time < 0.35, "damage occurs only in the active window")
 	_check(enemy.state == ENEMY.State.STAGGER and enemy.animator.current_animation == "reactions/hit", "hit starts stagger animation")
 	_check(enemy.knockback_velocity.y < 0.0 and absf(enemy.knockback_velocity.x) < 0.01, "knockback points away from player")
 	_check(player.hit_stop_left > 0.0 and enemy.hit_stop_left > 0.0 and player.camera_impulse_left > 0.0, "confirmed hit triggers local stop and camera impulse")
@@ -126,21 +126,22 @@ func _run() -> void:
 	await _frames(8)
 	await _capture("recoil")
 	await _frames(24)
-	_check(enemy.health == 75 and landed == 1, "persistent overlap never repeats damage within one swing")
+	_check(enemy.health == 80 and landed == 1, "persistent overlap never repeats damage within one swing")
 	_check(enemy.position.z < -0.05 and enemy.position.z > -0.5 and enemy.is_on_floor(), "knockback is small and floor collision stays stable")
 	_check(player.state == PLAYER.State.IDLE and not player.attack_hitbox.active, "attack recovers and disables hitbox")
 	_check(is_zero_approx(player.camera.h_offset) and is_zero_approx(player.camera.v_offset), "camera impulse decays with no residual offset")
 	_check(current_scene.find_children("HitImpact*", "Node3D", false, false).is_empty(), "impact cleans itself up")
-	for hit_number in range(2, 5):
+	# Finish kill with remaining HP: 80 left → light_1×4 more = exact death after 4 more 20-dmg hits.
+	for hit_number in range(2, 6):
 		player.position = enemy.position + Vector3(0, 0.02, 1.1)
 		player.reset_physics_interpolation()
 		await _swing()
-		_check(enemy.health == 100 - hit_number * 25 and landed == hit_number, "successful hit %d loses exactly 25 HP" % hit_number)
-	_check(enemy.state == ENEMY.State.DEAD and not enemy.hurtbox.enabled and enemy.hurtbox.collision_layer == 0, "four hits enter DEAD and disable hurtbox")
-	_check(not enemy.hurtbox.receive_hit(25, player.position, 0.05), "dead hurtbox immediately refuses damage")
+		_check(enemy.health == 100 - hit_number * 20 and landed == hit_number, "successful hit %d loses exactly 20 HP" % hit_number)
+	_check(enemy.state == ENEMY.State.DEAD and not enemy.hurtbox.enabled and enemy.hurtbox.collision_layer == 0, "five hits enter DEAD and disable hurtbox")
+	_check(not enemy.hurtbox.receive_hit_legacy(25, player.position, 0.05), "dead hurtbox immediately refuses damage")
 	await _capture("death")
 	await _swing()
-	_check(landed == 4 and player.camera_impulse_left == 0.0, "swinging at corpse produces no new hit or camera feedback")
+	_check(landed == 5 and player.camera_impulse_left == 0.0, "swinging at corpse produces no new hit or camera feedback")
 	await _frames(45)
 	_check(not is_instance_valid(enemy), "death removes enemy after a short delay")
 
@@ -150,7 +151,7 @@ func _run() -> void:
 	await _fresh(Vector3(-1.1, 0.03, 0))
 	player.visuals.rotation.y = -PI / 2.0
 	await _swing()
-	_check(enemy.health == 75 and enemy.position.x > 0.0, "hand hitbox and knockback follow rotated facing")
+	_check(enemy.health == 80 and enemy.position.x > 0.0, "hand hitbox and knockback follow rotated facing")
 
 	await _fresh(Vector3(0, 0.03, 3))
 	_axis(JOY_AXIS_TRIGGER_RIGHT, 1.0)
@@ -177,15 +178,15 @@ func _run() -> void:
 	await _fresh(Vector3(0, 0.03, -10.45), Vector3(0, 0.03, -11.55))
 	for i in 3:
 		await _swing()
-	_check(enemy.health == 25 and enemy.position.z >= -11.61 and enemy.is_on_floor(), "repeated knockback against wall remains stable")
+	_check(enemy.health == 40 and enemy.position.z >= -11.61 and enemy.is_on_floor(), "repeated knockback against wall remains stable")
 	_check(enemy.knockback_velocity.length() < 0.01, "wall does not accumulate knockback velocity")
 
 	await _fresh()
-	enemy.hurtbox.receive_hit(25, Vector3(0, 0, 1), 0.05)
+	enemy.hurtbox.receive_hit_legacy(25, Vector3(0, 0, 1), 0.05)
 	await _frames(5)
 	var prior_velocity := enemy.knockback_velocity
 	var prior_time := enemy.state_time
-	enemy.hurtbox.receive_hit(25, Vector3(1, 0, 0), 0.05)
+	enemy.hurtbox.receive_hit_legacy(25, Vector3(1, 0, 0), 0.05)
 	_check(enemy.health == 50 and enemy.knockback_velocity == prior_velocity and enemy.state_time == prior_time, "damage during stagger cannot stack or restart the reaction")
 
 	await _fresh(Vector3(0, 0.03, 4))
@@ -215,11 +216,11 @@ func _run() -> void:
 	await _frames(2)
 	_check(player.state == PLAYER.State.ATTACK and player.heavy_attack, "RB starts a heavy attack")
 	await _wait_for_hit()
-	_check(landed == 1 and enemy.health == 55, "heavy deals 45 damage once")
+	_check(landed == 1 and enemy.health == 48, "heavy deals 52 damage once")
 	heavy.pressed = false
 	Input.parse_input_event(heavy)
 	Input.flush_buffered_events()
-	await _frames(50)
+	await _frames(70)
 	_check(player.state == PLAYER.State.IDLE, "heavy recovers to idle")
 
 	# Dodge i-frames reject hurtbox damage during the active window.
@@ -227,7 +228,7 @@ func _run() -> void:
 	_dodge(true)
 	await _frames(6)
 	_check(player.is_invulnerable and not player.hurtbox.enabled, "dodge opens i-frames and disables hurtbox")
-	var accepted := player.hurtbox.receive_hit(20, Vector3(0, 0, 0), 0.05, 2.0)
+	var accepted := player.hurtbox.receive_hit_legacy(20, Vector3(0, 0, 0), 0.05, 2.0)
 	_check(not accepted and player.health == player.max_health, "dodge i-frames negate incoming damage")
 	_dodge(false)
 	await _frames(40)

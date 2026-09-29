@@ -100,7 +100,7 @@ func _run() -> void:
 
 	# Soft-lock: skip wait on death at before-final CP
 	scene.player.health = 0.0
-	scene.player._on_hurt(999, Vector3.ZERO, 0.05, 0.0)
+	scene.player._on_hurt(HitEvent.legacy(999, Vector3.ZERO, 0.05, 0.0))
 	await _frames(3)
 	_check(scene._ui_mode == MissionGame.UiMode.DEATH, "death mid-mission")
 	scene._restore_now()
