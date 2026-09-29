@@ -80,19 +80,27 @@ func _run() -> void:
 	_check(scene.mission.phase == MissionController.Phase.TRANSITION_02, "TRANSITION_02")
 	_check(scene._emergency_active, "emergency lighting active")
 	_check(scene.builder.doors[&"door_lab_out"].state != MissionDoor.State.LOCKED, "lab exit opens")
+	# Critical: approach door must open on E2 clear — trg_final is past door_final_in.
+	await _frames(8)
+	_check(scene.builder.doors[&"door_final_in"].state != MissionDoor.State.LOCKED, "final approach opens after E2 (before trg_final)")
+
+	# Soft-lock safety: if approach door is force-locked after E2 clear, safety reopens it.
+	scene.builder.doors[&"door_final_in"].lock()
+	scene._safety_door_unlock()
+	_check(scene.builder.doors[&"door_final_in"].state != MissionDoor.State.LOCKED, "safety unlocks final approach in TRANSITION_02")
 
 	# Before final checkpoint
 	scene._on_trigger(&"trg_cp_before_final", scene.player)
 	_check(scene.checkpoints.active_id == CheckpointSystem.ID_BEFORE_FINAL, "CP before final")
 
-	# Final encounter
+	# Final encounter (reachable only because approach door already open)
 	scene._on_trigger(&"trg_final", scene.player)
 	_check(scene.mission.phase == MissionController.Phase.FINAL_ENCOUNTER, "FINAL_ENCOUNTER")
 	await _frames(90)
 	await _clear_encounter(scene, &"final")
 	_check(scene.mission.phase == MissionController.Phase.MISSION_COMPLETE, "MISSION_COMPLETE")
 	_check(scene._ui_mode == MissionGame.UiMode.COMPLETE, "complete UI")
-	_check(scene.builder.doors[&"door_final_in"].state != MissionDoor.State.LOCKED, "final entrance unlocked")
+	_check(scene.builder.doors[&"door_final_in"].state != MissionDoor.State.LOCKED, "final entrance stays unlocked after clear")
 	_check(scene.builder.doors[&"door_final_a"].state != MissionDoor.State.LOCKED, "final side door A unlocked")
 	_check(scene.builder.doors[&"door_final_b"].state != MissionDoor.State.LOCKED, "final side door B unlocked")
 	_check(scene.builder.doors[&"door_final_c"].state != MissionDoor.State.LOCKED, "final rear door unlocked")

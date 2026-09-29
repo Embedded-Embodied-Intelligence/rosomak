@@ -168,6 +168,8 @@ func _on_phase_changed(phase: MissionController.Phase, _previous: MissionControl
 			music.set_bed(MusicController.Bed.EXPLORATION)
 			music.set_intensity(MusicController.Intensity.NONE)
 			_activate_emergency()
+			# Approach door must open here — trg_final sits past door_final_in.
+			_unlock_final_approach()
 		MissionController.Phase.FINAL_ENCOUNTER:
 			objectives.show_objective("DESTROY ALL HOSTILES")
 			music.set_bed(MusicController.Bed.FINAL_COMBAT)
@@ -358,6 +360,8 @@ func _on_encounter_finished(encounter_id: StringName) -> void:
 		&"e2":
 			builder.doors[&"door_lab_out"].request_open()
 			builder.doors[&"door_lab_in"].request_open()
+			# Unlock final approach now; trg_final is past this door (z 132 > door z 126).
+			_unlock_final_approach()
 			mission.set_phase(MissionController.Phase.TRANSITION_02)
 			objectives.show_objective("FOLLOW EMERGENCY CORRIDOR")
 			hud.banner("LAB SECURE", "Alarms ahead", 1.5, "", 48)
@@ -413,6 +417,18 @@ func _update_emergency_flicker() -> void:
 		_sfx(&"spark", -8.0, 0.1)
 
 
+func _unlock_final_approach() -> void:
+	## Opens the emergency→final gate. Must run on E2 clear / TRANSITION_02 —
+	## trg_final lives inside the chamber, past this door.
+	if not builder.doors.has(&"door_final_in"):
+		return
+	var door: MissionDoor = builder.doors[&"door_final_in"]
+	if door.state == MissionDoor.State.LOCKED or door.state == MissionDoor.State.CLOSED:
+		door.request_open()
+		if OS.is_debug_build():
+			print("[Mission] door_final_in unlocked (approach to final chamber)")
+
+
 func _open_final_doors() -> void:
 	for door_id in [&"door_final_in", &"door_final_a", &"door_final_b", &"door_final_c"]:
 		if builder.doors.has(door_id):
@@ -428,8 +444,12 @@ func _safety_door_unlock() -> void:
 	if mission.phase >= MissionController.Phase.TRANSITION_02 and builder.doors[&"door_lab_out"].state == MissionDoor.State.LOCKED:
 		if mission.is_encounter_clear(&"e2") or not _e2_started:
 			builder.doors[&"door_lab_out"].request_open()
-	if mission.phase >= MissionController.Phase.FINAL_ENCOUNTER and builder.doors[&"door_final_in"].state == MissionDoor.State.LOCKED:
-		builder.doors[&"door_final_in"].request_open()
+	# Approach door: after E2/TRANSITION_02 the path into final must be open.
+	# (Previously only unlocked on FINAL_ENCOUNTER, but trg_final is past the door.)
+	if mission.phase >= MissionController.Phase.TRANSITION_02:
+		if builder.doors[&"door_final_in"].state == MissionDoor.State.LOCKED:
+			if mission.is_encounter_clear(&"e2") or not _e2_started or mission.phase >= MissionController.Phase.FINAL_ENCOUNTER:
+				_unlock_final_approach()
 	# Softlock: every living final enemy gone + empty spawn queue must unlock and complete.
 	if (
 		mission.phase == MissionController.Phase.FINAL_ENCOUNTER
