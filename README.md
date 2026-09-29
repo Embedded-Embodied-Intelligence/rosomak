@@ -9,13 +9,15 @@ combat reference/test scene.
 ## Launch (macOS)
 
 1. Install [Godot 4.7.x](https://godotengine.org/download) (validated on **4.7.2**).
-2. Open `wolverine/project.godot`.
-3. Press **F5** (main scene `scenes/mission/main_menu.tscn`), or:
+2. From the **repo root** (`rosomak/`):
 
-```sh
+```bash
+cd /Users/kamel/Desktop/Projects/zaklad/rosomak
 "$HOME/Downloads/Godot.app/Contents/MacOS/Godot" --path wolverine
 ```
 
+3. Or open `wolverine/project.godot` in the editor and press **F5**
+   (main scene `scenes/mission/main_menu.tscn`).
 4. Title: **A / Enter** = PLAY, **B / Esc** = QUIT.
 5. Combat arena only: open `scenes/game.tscn` or `scenes/test_arena.tscn` and **F6**.
 
