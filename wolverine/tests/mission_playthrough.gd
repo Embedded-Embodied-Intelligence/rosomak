@@ -92,6 +92,20 @@ func _run() -> void:
 	await _clear_encounter(scene, &"final")
 	_check(scene.mission.phase == MissionController.Phase.MISSION_COMPLETE, "MISSION_COMPLETE")
 	_check(scene._ui_mode == MissionGame.UiMode.COMPLETE, "complete UI")
+	_check(scene.builder.doors[&"door_final_in"].state != MissionDoor.State.LOCKED, "final entrance unlocked")
+	_check(scene.builder.doors[&"door_final_a"].state != MissionDoor.State.LOCKED, "final side door A unlocked")
+	_check(scene.builder.doors[&"door_final_b"].state != MissionDoor.State.LOCKED, "final side door B unlocked")
+	_check(scene.builder.doors[&"door_final_c"].state != MissionDoor.State.LOCKED, "final rear door unlocked")
+
+	# Soft-lock: natural clear path also works via director reconcile (no forced finish).
+	scene.mission.restore_phase(MissionController.Phase.FINAL_ENCOUNTER)
+	scene._final_started = true
+	scene._finished_encounters.erase(&"final")
+	scene.director.begin_encounter(&"final", [[{"type": &"grunt", "entry": &"fin_a"}]], 2)
+	await _frames(40)
+	await _clear_encounter(scene, &"final")
+	_check(scene.mission.phase == MissionController.Phase.MISSION_COMPLETE, "reconcile path reaches MISSION_COMPLETE")
+	_check(scene.builder.doors[&"door_final_c"].state != MissionDoor.State.LOCKED, "final doors stay unlocked after clear")
 
 	# Soft-lock: reverse walk shouldn't re-lock cleared doors
 	scene.builder.doors[&"door_warehouse_out"].force_open()

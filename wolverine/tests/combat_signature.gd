@@ -75,8 +75,8 @@ func _run() -> void:
 	# --- Combo buffer / lockout ---
 	await _fresh()
 	_check(CombatAttackData.light_1().damage == 20, "light_1 data damage is 20")
-	_check(CombatAttackData.light_2().damage == 25, "light_2 data damage is 25")
-	_check(CombatAttackData.light_3().damage == 35, "light_3 data damage is 35")
+	_check(CombatAttackData.light_2().damage == 26, "light_2 data damage is 26")
+	_check(CombatAttackData.light_3().damage == 38, "light_3 data damage is 38")
 	_axis(JOY_AXIS_TRIGGER_RIGHT, 1.0)
 	await _frames(3)
 	_check(player.state == PLAYER.State.ATTACK and player.attack_kind == PLAYER.AttackKind.LIGHT_1, "RT starts LIGHT_1")

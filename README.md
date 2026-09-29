@@ -57,13 +57,24 @@ Death → **YOU DIED** (1–2s, skippable) → restore active checkpoint.
 | --- | --- | --- |
 | Move | Left stick | WASD |
 | Camera | Right stick | Mouse (captured) / arrows |
-| Light combo (3 hits, buffered) | RT | J / LMB |
-| Heavy attack | RB | K / RMB |
+| Light combo (RT ×3 buffered: L1→L2→L3) | RT | J / LMB |
+| Heavy attack / advancing heavy / lunge | RB | K / RMB |
+| Grab / Finish (context) | LT | L / MMB |
+| Grab follow-up: Stab | RT (while grabbing) | J / LMB |
+| Grab follow-up: Throw | RB (while grabbing) | K / RMB |
+| Release grab | A | Space |
 | Dodge (i-frames) | A | Space / Shift |
 | Rage (when full) | Y | Q |
 | Pause | Start | Esc |
 | Confirm / Replay | A | Enter |
 | Cancel / Exit | B | Esc |
+
+**Context prompts** appear when an enemy is grabbable (`LT - GRAB`) or finishable (`LT - FINISH`),
+and during a grab (`RT - STAB   RB - THROW`). Brief one-time tutorial toasts teach the first grab,
+finisher, and grab follow-ups.
+
+**Finisher:** LT near a low-HP (~35%) or heavily staggered enemy.
+**Grab:** LT near a living enemy (heavies/brutes need stagger first).
 
 ## Automated tests
 
@@ -71,6 +82,10 @@ Death → **YOU DIED** (1–2s, skippable) → restore active checkpoint.
 # Combat regression (existing)
 "$HOME/Downloads/Godot.app/Contents/MacOS/Godot" --headless --path wolverine \
   --fixed-fps 60 --script res://tests/combat_smoke.gd
+
+# Combat signature (grab / finisher / combo)
+"$HOME/Downloads/Godot.app/Contents/MacOS/Godot" --headless --path wolverine \
+  --fixed-fps 60 --script res://tests/combat_signature.gd
 
 # Mission systems
 "$HOME/Downloads/Godot.app/Contents/MacOS/Godot" --headless --path wolverine \
@@ -86,8 +101,8 @@ Expect `RESULT: … checks, 0 failures` and exit code `0`.
 ## Performance notes (M1 8GB)
 
 Compatibility renderer, 1280×720, 60 FPS cap, Jolt physics, modular box geometry,
-shared materials, no realtime shadow cascade on fill lights, synthesized audio.
-Target: stable 60 FPS with ≤5 active enemies.
+shared materials, blood FX capped (~48 decals, pooled), no realtime shadow cascade on fill lights,
+synthesized audio. Target: stable 60 FPS with ≤5 active enemies.
 
 ## Architecture (short)
 
