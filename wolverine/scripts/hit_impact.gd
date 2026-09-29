@@ -1,8 +1,13 @@
 extends Node3D
 
-## Heavier hits spawn a larger flash; the lifetime stays the same.
+## Lightweight slash flash; heavier hits spawn a larger cross.
 var size: float = 1.0
 var age: float = 0.0
+
+
+func _ready() -> void:
+	rotation.y = randf_range(0.0, TAU)
+	rotation.z = randf_range(-0.4, 0.4)
 
 
 func _process(delta: float) -> void:
@@ -10,4 +15,6 @@ func _process(delta: float) -> void:
 	if age >= 0.12:
 		queue_free()
 		return
-	scale = Vector3.ONE * size * (1.0 - age / 0.12)
+	var t := age / 0.12
+	scale = Vector3.ONE * size * (1.0 - t * 0.35)
+	rotate_y(delta * 8.0)

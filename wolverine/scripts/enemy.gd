@@ -231,11 +231,11 @@ func _enter(next_state: State) -> void:
 			# The first 40% of the swing stretches over the windup as a slow, readable draw.
 			animator.play(attack_animation, 0.1)
 			animator.speed_scale = animator.get_animation(attack_animation).length * 0.4 / windup_time
-			Sfx.play(&"telegraph", -8.0)
+			_sfx(&"telegraph", -8.0)
 		State.STRIKE:
 			attack_hitbox.begin_swing(self)
 			animator.speed_scale = animator.get_animation(attack_animation).length * 0.6 / strike_time
-			Sfx.play(&"swing", -9.0)
+			_sfx(&"swing", -9.0)
 		State.RECOVER:
 			attack_cooldown = randf_range(cooldown_range.x, cooldown_range.y)
 			animator.play(&"idle", 0.2)
@@ -286,8 +286,17 @@ func _die(push: Vector2) -> void:
 	_bar.visible = false
 	animator.speed_scale = 1.0
 	animator.play(&"die", 0.04, animator.get_animation(&"die").length / 0.55)
-	Sfx.play(&"enemy_die", -2.0)
+	_sfx(&"enemy_die", -2.0)
 	died.emit(self)
+
+
+func _sfx(sound: StringName, volume_db: float = 0.0, pitch_jitter: float = 0.06) -> void:
+	var tree := get_tree()
+	if tree == null:
+		return
+	var bus := tree.root.get_node_or_null("Sfx")
+	if bus and bus.has_method("play"):
+		bus.play(sound, volume_db, pitch_jitter)
 
 
 func _update_overlay(delta: float) -> void:

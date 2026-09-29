@@ -65,6 +65,10 @@ attack={
 "deadzone": 0.5,
 "events": [Object(InputEventJoypadMotion,"device":-1,"axis":5,"axis_value":1.0), Object(InputEventMouseButton,"device":-1,"button_index":1), Object(InputEventKey,"device":-1,"physical_keycode":74)]
 }
+attack_heavy={
+"deadzone": 0.5,
+"events": [Object(InputEventJoypadButton,"device":-1,"button_index":10), Object(InputEventMouseButton,"device":-1,"button_index":2), Object(InputEventKey,"device":-1,"physical_keycode":75)]
+}
 dodge={
 "deadzone": 0.5,
 "events": [Object(InputEventJoypadButton,"device":-1,"button_index":0), Object(InputEventKey,"device":-1,"physical_keycode":32), Object(InputEventKey,"device":-1,"physical_keycode":4194325)]
@@ -76,6 +80,10 @@ rage={
 pause={
 "deadzone": 0.5,
 "events": [Object(InputEventJoypadButton,"device":-1,"button_index":6), Object(InputEventKey,"device":-1,"physical_keycode":4194305)]
+}
+ui_cancel={
+"deadzone": 0.5,
+"events": [Object(InputEventJoypadButton,"device":-1,"button_index":1), Object(InputEventKey,"device":-1,"physical_keycode":4194305)]
 }
 
 [layer_names]
@@ -98,4 +106,5 @@ common/physics_interpolation=true
 rendering_device/driver.windows="d3d12"
 renderer/rendering_method="gl_compatibility"
 renderer/rendering_method.mobile="gl_compatibility"
+textures/vram_compression/import_etc2_astc=true
 lights_and_shadows/directional_shadow/size=1024

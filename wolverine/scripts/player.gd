@@ -13,13 +13,16 @@ const ANIMATIONS: Array[StringName] = [
 	&"idle", &"sprint", &"actions/dodge", &"attack-melee-right", &"reactions/hit", &"die"
 ]
 const HIT_IMPACT := preload("res://scenes/hit_impact.tscn")
-# A three-step string: `time` scales attack_duration, `limb` indexes the hitbox anchors.
-# The first step keeps Milestone 3's single-swing values; the kick is a heavy finisher.
-const COMBO: Array[Dictionary] = [
+## Three light claw swings (RT). Buffering chains into the next step.
+const LIGHT_COMBO: Array[Dictionary] = [
 	{animation = &"attack-melee-right", limb = 0, time = 1.0, damage = 25, knockback = 2.4, hit_stop = 0.05},
-	{animation = &"attack-melee-left", limb = 1, time = 0.9, damage = 25, knockback = 2.4, hit_stop = 0.05},
-	{animation = &"attack-kick-right", limb = 2, time = 1.3, damage = 45, knockback = 7.5, hit_stop = 0.1},
+	{animation = &"attack-melee-left", limb = 1, time = 0.9, damage = 25, knockback = 2.6, hit_stop = 0.055},
+	{animation = &"attack-melee-right", limb = 0, time = 1.05, damage = 25, knockback = 3.2, hit_stop = 0.06},
 ]
+## Dedicated heavy (RB): slower, bigger knockback and hit-stop.
+const HEAVY_ATTACK := {
+	animation = &"attack-kick-right", limb = 2, time = 1.35, damage = 45, knockback = 7.5, hit_stop = 0.07
+}
 const RAGE_MAX := 100.0
 
 @export var move_speed: float = 5.0
@@ -40,7 +43,7 @@ const RAGE_MAX := 100.0
 @export_range(0.05, 0.3) var camera_impulse_duration: float = 0.16
 
 @export_group("Combo")
-## A press after this fraction of a swing queues the next step.
+## A press after this fraction of a swing queues the next light step.
 @export_range(0.0, 1.0) var combo_buffer_start: float = 0.3
 ## A queued step starts at this fraction, cancelling the current swing's recovery.
 @export_range(0.0, 1.0) var combo_chain_point: float = 0.8
@@ -53,7 +56,7 @@ const RAGE_MAX := 100.0
 @export var max_health: int = 100
 ## Healing factor: regeneration starts after this long without taking damage.
 @export var regen_delay: float = 3.0
-@export var regen_rate: float = 6.0
+@export var regen_rate: float = 10.0
 @export_range(0.1, 1.0) var hurt_duration: float = 0.3
 ## Extra invulnerability after a hurt reaction, so a crowd cannot juggle the player.
 @export_range(0.0, 2.0) var hurt_grace: float = 0.6
@@ -71,6 +74,7 @@ var hit_stop_left: float = 0.0
 var camera_impulse_left: float = 0.0
 var combo_step: int = 0
 var combo_queued: bool = false
+var heavy_attack: bool = false
 var lunge_velocity := Vector3.ZERO
 var knockback_velocity := Vector2.ZERO
 var health: float
@@ -88,6 +92,7 @@ var _impulse_scale: float = 1.0
 var _mouse_look := Vector2.ZERO
 var _shown_health: int = 0
 var _overlay := StandardMaterial3D.new()
+var _claw_material := StandardMaterial3D.new()
 
 var is_invulnerable: bool:
 	get:
@@ -128,14 +133,48 @@ func _ready() -> void:
 	animator.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 	attack_hitbox.hit_landed.connect(_on_hit_landed)
 	hurtbox.hit_received.connect(_on_hurt)
-	# One transparent overlay tints every body part for rage and post-hit blinking.
+	_apply_claw_fighter_look()
+	animator.play(ANIMATIONS[state])
+	print(State.keys()[state])
+
+
+func _apply_claw_fighter_look() -> void:
+	# Original identity: dark tactical body + steel claw blades (not a costume copy).
+	var body := StandardMaterial3D.new()
+	body.albedo_color = Color(0.12, 0.13, 0.15)
+	body.roughness = 0.85
+	body.metallic = 0.05
+	_claw_material.albedo_color = Color(0.78, 0.82, 0.88)
+	_claw_material.metallic = 0.95
+	_claw_material.roughness = 0.28
+	_claw_material.emission_enabled = true
+	_claw_material.emission = Color(0.35, 0.45, 0.55)
+	_claw_material.emission_energy_multiplier = 0.35
 	_overlay.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_overlay.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_overlay.albedo_color = Color(1, 1, 1, 0)
 	for mesh in $Visuals/Humanoid.find_children("*", "MeshInstance3D", true, false):
+		mesh.material_override = body
 		mesh.material_overlay = _overlay
-	animator.play(ANIMATIONS[state])
-	print(State.keys()[state])
+	_attach_claws(limbs[0])
+	_attach_claws(limbs[1])
+
+
+func _attach_claws(hand: Node3D) -> void:
+	var claws := Node3D.new()
+	claws.name = "Claws"
+	hand.add_child(claws)
+	claws.position = Vector3(0.0, -0.28, 0.02)
+	for i in 3:
+		var blade := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(0.035, 0.42, 0.02)
+		blade.mesh = box
+		blade.material_override = _claw_material
+		blade.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		blade.position = Vector3((i - 1) * 0.045, -0.12, 0.0)
+		blade.rotation_degrees = Vector3(8.0, 0.0, (i - 1) * 6.0)
+		claws.add_child(blade)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -187,12 +226,12 @@ func _physics_process(delta: float) -> void:
 	elif state == State.ATTACK:
 		var swing_time := _attack_time()
 		if (
-			can_act and Input.is_action_just_pressed("attack")
-			and combo_step < COMBO.size() - 1 and state_time >= swing_time * combo_buffer_start
+			can_act and not heavy_attack and Input.is_action_just_pressed("attack")
+			and combo_step < LIGHT_COMBO.size() - 1 and state_time >= swing_time * combo_buffer_start
 		):
 			combo_queued = true
 		if combo_queued and state_time >= swing_time * combo_chain_point:
-			_start_attack(combo_step + 1, move_direction)
+			_start_light(combo_step + 1, move_direction)
 		elif state_time >= swing_time:
 			_set_state(resume_state)
 	elif state == State.HURT and state_time >= hurt_duration:
@@ -204,8 +243,10 @@ func _physics_process(delta: float) -> void:
 			dodge_direction = move_direction.normalized() if not move_input.is_zero_approx() else -visuals.global_basis.z
 			dodge_cooldown_left = dodge_duration + dodge_cooldown
 			_set_state(State.DODGE)
+		elif Input.is_action_just_pressed("attack_heavy"):
+			_start_heavy(move_direction)
 		elif Input.is_action_just_pressed("attack"):
-			_start_attack(0, move_direction)
+			_start_light(0, move_direction)
 	if can_act and Input.is_action_just_pressed("rage") and rage >= RAGE_MAX and not raging:
 		_start_rage()
 
@@ -254,7 +295,8 @@ func _physics_process(delta: float) -> void:
 
 	animator.advance(delta)
 	# Follow the animated limb without inheriting the imported model's 3x scale.
-	attack_hitbox.global_position = limbs[COMBO[combo_step].limb].to_global(Vector3(0, -0.2, 0))
+	var move := _current_move()
+	attack_hitbox.global_position = limbs[int(move.limb)].to_global(Vector3(0, -0.2, 0))
 	var swing := _attack_time()
 	attack_hitbox.set_active(
 		state == State.ATTACK
@@ -272,21 +314,38 @@ func add_rage(amount: float) -> void:
 	rage_changed.emit(rage, false)
 
 
+func _current_move() -> Dictionary:
+	return HEAVY_ATTACK if heavy_attack else LIGHT_COMBO[combo_step]
+
+
 func _attack_time() -> float:
 	var speed := rage_speed_multiplier if raging else 1.0
-	return attack_duration * COMBO[combo_step].time / speed
+	return attack_duration * float(_current_move().time) / speed
 
 
-func _start_attack(step: int, move_direction: Vector3) -> void:
+func _start_light(step: int, move_direction: Vector3) -> void:
+	heavy_attack = false
 	combo_step = step
 	combo_queued = false
-	var move: Dictionary = COMBO[step]
-	var damage_scale := rage_damage_multiplier if raging else 1.0
-	attack_hitbox.damage = roundi(move.damage * damage_scale)
-	attack_hitbox.knockback = move.knockback
-	attack_hitbox.hit_stop_duration = move.hit_stop
+	_configure_hitbox(_current_move())
 	_aim_attack(move_direction)
 	_set_state(State.ATTACK, true)
+
+
+func _start_heavy(move_direction: Vector3) -> void:
+	heavy_attack = true
+	combo_step = 0
+	combo_queued = false
+	_configure_hitbox(HEAVY_ATTACK)
+	_aim_attack(move_direction)
+	_set_state(State.ATTACK, true)
+
+
+func _configure_hitbox(move: Dictionary) -> void:
+	var damage_scale := rage_damage_multiplier if raging else 1.0
+	attack_hitbox.damage = roundi(float(move.damage) * damage_scale)
+	attack_hitbox.knockback = float(move.knockback)
+	attack_hitbox.hit_stop_duration = float(move.hit_stop)
 
 
 ## Soft lock: snap the swing toward the best enemy in front and lunge into range.
@@ -321,7 +380,7 @@ func _aim_attack(move_direction: Vector3) -> void:
 func _start_rage() -> void:
 	rage_left = rage_duration
 	_kick_camera(1.6)
-	Sfx.play(&"rage", 2.0, 0.0)
+	_sfx(&"rage", 2.0, 0.0)
 	rage_changed.emit(rage, true)
 
 
@@ -361,11 +420,16 @@ func _set_state(next_state: State, force: bool = false) -> void:
 	attack_hitbox.set_active(false)
 	if state == State.ATTACK:
 		attack_hitbox.begin_swing(self)
-		Sfx.play(&"swing", -4.0)
+		_sfx(&"swing", -4.0)
 	elif state == State.DODGE:
-		Sfx.play(&"dodge", -3.0)
+		_sfx(&"dodge", -3.0)
+	elif state != State.ATTACK:
+		heavy_attack = false
+		combo_queued = false
 	animator.speed_scale = 1.0
-	var animation: StringName = COMBO[combo_step].animation if state == State.ATTACK else ANIMATIONS[state]
+	var animation: StringName = (
+		StringName(_current_move().animation) if state == State.ATTACK else ANIMATIONS[state]
+	)
 	var length := animator.get_animation(animation).length
 	var playback_speed := 1.0
 	match state:
@@ -394,11 +458,12 @@ func _on_hurt(damage: int, source_position: Vector3, hit_stop: float, knockback:
 	since_damage = 0.0
 	grace_left = hurt_duration + hurt_grace
 	combo_queued = false
+	heavy_attack = false
 	lunge_velocity = Vector3.ZERO
 	hit_stop_left = maxf(hit_stop_left, hit_stop)
 	_kick_camera(2.4)
 	_rumble(0.5, 0.7, 0.2)
-	Sfx.play(&"hurt")
+	_sfx(&"hurt")
 	hurt.emit(damage)
 	_emit_health()
 	var away := global_position - source_position
@@ -418,26 +483,30 @@ func _on_hurt(damage: int, source_position: Vector3, hit_stop: float, knockback:
 
 func _input(event: InputEvent) -> void:
 	# Rumble goes to whichever controller last attacked or dodged.
-	if event.is_action_pressed("attack") or event.is_action_pressed("dodge"):
+	if (
+		event.is_action_pressed("attack")
+		or event.is_action_pressed("attack_heavy")
+		or event.is_action_pressed("dodge")
+	):
 		if event is InputEventJoypadMotion or event is InputEventJoypadButton:
 			_attack_device = event.device
 
 
 func _on_hit_landed(contact_position: Vector3) -> void:
-	var finisher := combo_step == COMBO.size() - 1
+	var finisher := heavy_attack or (not heavy_attack and combo_step == LIGHT_COMBO.size() - 1)
 	hit_stop_left = attack_hitbox.hit_stop_duration
 	_kick_camera(1.8 if finisher else 1.0)
 	var impact := HIT_IMPACT.instantiate()
 	impact.size = 1.8 if finisher else 1.0
 	get_tree().current_scene.add_child(impact)
 	impact.global_position = contact_position
-	Sfx.play(&"heavy_hit" if finisher else &"hit")
+	_sfx(&"heavy_hit" if finisher else &"hit")
 	hit_chain += 1
 	hit_chain_left = 2.0
 	hit_chain_changed.emit(hit_chain)
 	add_rage(rage_per_hit)
 	if _attack_device >= 0:
-		_rumble(0.16, 0.24, 0.09)
+		_rumble(0.2 if finisher else 0.16, 0.35 if finisher else 0.24, 0.1 if finisher else 0.09)
 
 
 func _rumble(weak: float, strong: float, duration: float) -> void:
@@ -450,6 +519,16 @@ func _rumble(weak: float, strong: float, duration: float) -> void:
 func _kick_camera(scale: float) -> void:
 	camera_impulse_left = camera_impulse_duration
 	_impulse_scale = scale
+
+
+func _sfx(sound: StringName, volume_db: float = 0.0, pitch_jitter: float = 0.06) -> void:
+	# Resolve by path so scripts compile even when preloaded before autoloads (tests).
+	var tree := get_tree()
+	if tree == null:
+		return
+	var bus := tree.root.get_node_or_null("Sfx")
+	if bus and bus.has_method("play"):
+		bus.play(sound, volume_db, pitch_jitter)
 
 
 func _process(delta: float) -> void:
