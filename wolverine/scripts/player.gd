@@ -18,6 +18,7 @@ const ANIMATIONS: Array[StringName] = [
 	&"idle", &"sprint", &"actions/dodge", &"attack-melee-right", &"reactions/hit", &"die"
 ]
 const HIT_IMPACT := preload("res://scenes/hit_impact.tscn")
+const CharacterAnimLib := preload("res://scripts/combat/character_anim.gd")
 const RAGE_MAX := 100.0
 const COUNTER_WINDOW := 0.6
 const GRAB_RANGE := 1.85
@@ -30,17 +31,20 @@ const FINISHER_HP_RATIO := 0.35
 @export var move_speed: float = 5.0
 @export var acceleration: float = 24.0
 @export var deceleration: float = 30.0
-@export var turn_speed: float = 12.0
+@export var turn_speed: float = 14.0
+@export var turn_speed_idle: float = 9.0
 @export var camera_speed: float = 2.4
 @export var mouse_sensitivity: float = 0.0025
 @export_range(1.0, 20.0) var dodge_speed: float = 11.0
-@export_range(0.1, 1.0) var dodge_duration: float = 0.32
-@export_range(0.0, 2.0) var dodge_cooldown: float = 0.28
+@export_range(0.1, 1.0) var dodge_duration: float = 0.34
+@export_range(0.0, 2.0) var dodge_cooldown: float = 0.26
 @export_range(0.1, 2.0) var attack_duration: float = 0.5
-@export_range(0.0, 1.0) var dodge_iframe_start: float = 0.05
-@export_range(0.0, 1.0) var dodge_iframe_end: float = 0.22
+@export_range(0.0, 1.0) var dodge_iframe_start: float = 0.04
+@export_range(0.0, 1.0) var dodge_iframe_end: float = 0.24
 @export_range(0.0, 0.1) var camera_impulse_strength: float = 0.035
 @export_range(0.05, 0.3) var camera_impulse_duration: float = 0.16
+@export_range(0.5, 3.0) var walk_anim_threshold: float = 1.35
+@export_range(0.05, 0.5) var footstep_interval: float = 0.28
 
 @export_group("Magnetism")
 @export var aim_assist_range: float = 4.2
@@ -101,6 +105,14 @@ var _attack_held_prev: bool = false
 var _grab_held_prev: bool = false
 var _context_prompt: String = ""
 var _tutorials_shown: Dictionary = {} ## StringName -> bool
+var _pending_throw_dir := Vector3.ZERO
+var _throw_released: bool = false
+var _footstep_left: float = 0.0
+var _loco_anim: StringName = &"idle"
+var _finisher_cam_yaw: float = 0.0
+var _finisher_cam_blend: float = 0.0
+var _last_hurt_dir := Vector3.FORWARD
+var _hurt_play_duration: float = 0.3
 signal context_prompt_changed(text: String)
 signal tutorial_requested(text: String)
 
@@ -141,13 +153,23 @@ func _ready() -> void:
 	_fov_base = camera.fov
 	current_move = CombatAttackData.light_1()
 	spring_arm.add_excluded_object(get_rid())
-	animator.add_animation_library(&"actions", preload("res://animations/dodge.tres"))
-	animator.add_animation_library(&"reactions", preload("res://animations/enemy_reactions.tres"))
+	if animator.has_animation_library(&"actions"):
+		animator.remove_animation_library(&"actions")
+	if animator.has_animation_library(&"reactions"):
+		animator.remove_animation_library(&"reactions")
+	animator.add_animation_library(&"actions", CharacterAnimLib.build_actions())
+	animator.add_animation_library(&"reactions", CharacterAnimLib.build_reactions())
 	animator.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
+	if animator.has_animation(&"idle"):
+		animator.get_animation(&"idle").loop_mode = Animation.LOOP_LINEAR
+	if animator.has_animation(&"walk"):
+		animator.get_animation(&"walk").loop_mode = Animation.LOOP_LINEAR
+	if animator.has_animation(&"sprint"):
+		animator.get_animation(&"sprint").loop_mode = Animation.LOOP_LINEAR
 	attack_hitbox.hit_landed.connect(_on_hit_landed)
 	hurtbox.hit_received.connect(_on_hurt)
 	_apply_claw_fighter_look()
-	animator.play(ANIMATIONS[state])
+	animator.play(&"idle")
 	if DebugCombat.state_label or DebugCombat.combo_label:
 		_debug_label = Label3D.new()
 		_debug_label.position = Vector3(0, 2.2, 0)
@@ -157,24 +179,28 @@ func _ready() -> void:
 
 
 func _apply_claw_fighter_look() -> void:
-	## Bold comic-book yellow/blue claw-fighter silhouette (original, fan-inspired).
+	## Bold comic-book yellow/blue/black claw-fighter silhouette (original, fan-inspired).
 	var yellow := StandardMaterial3D.new()
-	yellow.albedo_color = Color(0.92, 0.78, 0.12)
-	yellow.roughness = 0.55
-	yellow.metallic = 0.08
+	yellow.albedo_color = Color(0.95, 0.82, 0.08)
+	yellow.roughness = 0.48
+	yellow.metallic = 0.05
 	var blue := StandardMaterial3D.new()
-	blue.albedo_color = Color(0.12, 0.28, 0.72)
-	blue.roughness = 0.5
-	blue.metallic = 0.12
+	blue.albedo_color = Color(0.08, 0.22, 0.68)
+	blue.roughness = 0.42
+	blue.metallic = 0.15
 	var black := StandardMaterial3D.new()
-	black.albedo_color = Color(0.06, 0.06, 0.08)
-	black.roughness = 0.7
-	_claw_material.albedo_color = Color(0.82, 0.86, 0.92)
-	_claw_material.metallic = 0.98
-	_claw_material.roughness = 0.18
+	black.albedo_color = Color(0.04, 0.04, 0.05)
+	black.roughness = 0.62
+	var leather := StandardMaterial3D.new()
+	leather.albedo_color = Color(0.1, 0.12, 0.18)
+	leather.roughness = 0.78
+	leather.metallic = 0.08
+	_claw_material.albedo_color = Color(0.88, 0.9, 0.94)
+	_claw_material.metallic = 1.0
+	_claw_material.roughness = 0.12
 	_claw_material.emission_enabled = true
-	_claw_material.emission = Color(0.45, 0.55, 0.7)
-	_claw_material.emission_energy_multiplier = 0.55
+	_claw_material.emission = Color(0.55, 0.65, 0.8)
+	_claw_material.emission_energy_multiplier = 0.7
 	_overlay.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_overlay.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_overlay.albedo_color = Color(1, 1, 1, 0)
@@ -192,13 +218,46 @@ func _apply_claw_fighter_look() -> void:
 		mesh.material_override = mat
 		mesh.material_overlay = _overlay
 	_attach_mask_fins()
+	_attach_suit_accents(leather, blue)
 	_attach_claws(limbs[0])
 	_attach_claws(limbs[1])
 	# Uniform visual scale only — never scale Visuals non-uniformly (Jolt hitbox child).
-	# Muscular read via torso mesh scale (Humanoid child, not physics).
 	var torso: Node3D = $Visuals/Humanoid.find_child("torso", true, false)
 	if torso:
-		torso.scale = Vector3(1.14, 1.06, 1.12)
+		torso.scale = Vector3(1.18, 1.08, 1.16)
+
+
+func _attach_suit_accents(leather: StandardMaterial3D, blue: StandardMaterial3D) -> void:
+	var torso: Node3D = $Visuals/Humanoid.find_child("torso", true, false)
+	if torso == null or torso.get_node_or_null("SuitAccents"):
+		return
+	var accents := Node3D.new()
+	accents.name = "SuitAccents"
+	torso.add_child(accents)
+	for angle in [-38.0, 38.0]:
+		var strap := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(0.08, 0.55, 0.04)
+		strap.mesh = box
+		strap.material_override = leather
+		strap.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		strap.position = Vector3(0.0, 0.05, 0.12)
+		strap.rotation_degrees = Vector3(8.0, 0.0, angle)
+		accents.add_child(strap)
+	var belt := MeshInstance3D.new()
+	var belt_mesh := BoxMesh.new()
+	belt_mesh.size = Vector3(0.42, 0.08, 0.1)
+	belt.mesh = belt_mesh
+	belt.material_override = leather
+	belt.position = Vector3(0.0, -0.28, 0.1)
+	accents.add_child(belt)
+	var buckle := MeshInstance3D.new()
+	var buckle_mesh := BoxMesh.new()
+	buckle_mesh.size = Vector3(0.12, 0.1, 0.06)
+	buckle.mesh = buckle_mesh
+	buckle.material_override = blue
+	buckle.position = Vector3(0.0, -0.28, 0.16)
+	accents.add_child(buckle)
 
 
 func _attach_mask_fins() -> void:
@@ -214,26 +273,39 @@ func _attach_mask_fins() -> void:
 	head.add_child(fins)
 	fins.position = Vector3(0.0, 0.12, -0.02)
 	var mat := StandardMaterial3D.new()
-	mat.albedo_color = Color(0.04, 0.04, 0.06)
-	mat.roughness = 0.65
+	mat.albedo_color = Color(0.03, 0.03, 0.04)
+	mat.roughness = 0.55
 	for side in [-1.0, 1.0]:
 		var fin := MeshInstance3D.new()
 		var box := BoxMesh.new()
-		box.size = Vector3(0.06, 0.28, 0.1)
+		box.size = Vector3(0.055, 0.34, 0.09)
 		fin.mesh = box
 		fin.material_override = mat
 		fin.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		fin.position = Vector3(side * 0.16, 0.18, -0.04)
-		fin.rotation_degrees = Vector3(-18.0, side * 22.0, side * 12.0)
+		fin.position = Vector3(side * 0.15, 0.2, -0.05)
+		fin.rotation_degrees = Vector3(-22.0, side * 18.0, side * 14.0)
 		fins.add_child(fin)
-	# Brow / mask plate for stronger head silhouette.
 	var brow := MeshInstance3D.new()
 	var brow_mesh := BoxMesh.new()
-	brow_mesh.size = Vector3(0.32, 0.08, 0.14)
+	brow_mesh.size = Vector3(0.34, 0.07, 0.13)
 	brow.mesh = brow_mesh
 	brow.material_override = mat
-	brow.position = Vector3(0.0, 0.1, 0.08)
+	brow.position = Vector3(0.0, 0.1, 0.09)
 	fins.add_child(brow)
+	var eye_mat := StandardMaterial3D.new()
+	eye_mat.albedo_color = Color(0.95, 0.95, 0.98)
+	eye_mat.emission_enabled = true
+	eye_mat.emission = Color(0.7, 0.75, 0.85)
+	eye_mat.emission_energy_multiplier = 0.4
+	for side in [-1.0, 1.0]:
+		var eye := MeshInstance3D.new()
+		var eye_mesh := BoxMesh.new()
+		eye_mesh.size = Vector3(0.09, 0.04, 0.03)
+		eye.mesh = eye_mesh
+		eye.material_override = eye_mat
+		eye.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		eye.position = Vector3(side * 0.07, 0.04, 0.14)
+		fins.add_child(eye)
 
 
 func _attach_claws(hand: Node3D) -> void:
@@ -242,17 +314,38 @@ func _attach_claws(hand: Node3D) -> void:
 	var claws := Node3D.new()
 	claws.name = "Claws"
 	hand.add_child(claws)
-	claws.position = Vector3(0.0, -0.28, 0.02)
+	claws.position = Vector3(0.0, -0.3, 0.03)
+	var knuckle := StandardMaterial3D.new()
+	knuckle.albedo_color = Color(0.25, 0.22, 0.2)
+	knuckle.metallic = 0.4
+	knuckle.roughness = 0.45
 	for i in 3:
+		var mount := MeshInstance3D.new()
+		var mount_mesh := BoxMesh.new()
+		mount_mesh.size = Vector3(0.045, 0.06, 0.04)
+		mount.mesh = mount_mesh
+		mount.material_override = knuckle
+		mount.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		mount.position = Vector3((i - 1) * 0.055, -0.02, 0.01)
+		claws.add_child(mount)
 		var blade := MeshInstance3D.new()
 		var box := BoxMesh.new()
-		box.size = Vector3(0.04, 0.52, 0.025)
+		box.size = Vector3(0.032, 0.58, 0.018)
 		blade.mesh = box
 		blade.material_override = _claw_material
 		blade.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		blade.position = Vector3((i - 1) * 0.05, -0.16, 0.02)
-		blade.rotation_degrees = Vector3(10.0, 0.0, (i - 1) * 8.0)
+		blade.position = Vector3((i - 1) * 0.055, -0.28, 0.02)
+		blade.rotation_degrees = Vector3(12.0, 0.0, (i - 1) * 7.0)
 		claws.add_child(blade)
+		var tip := MeshInstance3D.new()
+		var tip_mesh := BoxMesh.new()
+		tip_mesh.size = Vector3(0.02, 0.1, 0.012)
+		tip.mesh = tip_mesh
+		tip.material_override = _claw_material
+		tip.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		tip.position = Vector3((i - 1) * 0.055, -0.58, 0.03)
+		tip.rotation_degrees = Vector3(18.0, 0.0, (i - 1) * 7.0)
+		claws.add_child(tip)
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -315,7 +408,9 @@ func _physics_process(delta: float) -> void:
 	if state == State.DODGE:
 		horizontal_velocity = Vector2(dodge_direction.x, dodge_direction.z) * dodge_speed
 	elif state == State.ATTACK and not lunge_velocity.is_zero_approx():
-		horizontal_velocity = Vector2(lunge_velocity.x, lunge_velocity.z)
+		var lunge_t := clampf(state_time / maxf(0.01, lunge_time), 0.0, 1.0)
+		var ease := 1.0 - lunge_t * lunge_t  # decelerate into impact instead of skate-cut
+		horizontal_velocity = Vector2(lunge_velocity.x, lunge_velocity.z) * ease
 		if state_time >= lunge_time:
 			lunge_velocity = Vector3.ZERO
 			horizontal_velocity = Vector2.ZERO
@@ -343,18 +438,22 @@ func _physics_process(delta: float) -> void:
 	)
 	if not holds_facing and not facing_direction.is_zero_approx():
 		var target_yaw := atan2(-facing_direction.x, -facing_direction.z)
+		var ground_speed := Vector2(velocity.x, velocity.z).length()
+		var yaw_rate := turn_speed if ground_speed > 0.6 else turn_speed_idle
+		# Faster catch-up when nearly aligned; soft turn-in-place at low speed.
+		var yaw_err := absf(wrapf(target_yaw - visuals.rotation.y, -PI, PI))
+		if yaw_err > 0.9 and ground_speed < 0.35:
+			yaw_rate *= 1.35
 		visuals.rotation.y = lerp_angle(
-			visuals.rotation.y, target_yaw, 1.0 - exp(-turn_speed * delta)
+			visuals.rotation.y, target_yaw, 1.0 - exp(-yaw_rate * delta)
 		)
 
 	if state == State.IDLE or state == State.RUN:
-		var ground_speed := Vector2(get_real_velocity().x, get_real_velocity().z).length()
-		var run_threshold := 0.08 if state == State.RUN else 0.15
-		_set_state(State.RUN if ground_speed > run_threshold else State.IDLE)
-		animator.speed_scale = clampf(ground_speed / move_speed, 0.25, 1.0) if state == State.RUN else 1.0
+		_update_locomotion_anim(delta)
 
 	animator.advance(delta)
 	_update_hitbox_active()
+	_update_finisher_camera(delta)
 	_update_debug_label()
 
 
@@ -379,23 +478,35 @@ func _update_action_states(
 	if state == State.DODGE:
 		_poll_dodge_counter()
 		if state_time >= dodge_duration:
-			velocity.x = move_direction.x * move_speed
-			velocity.z = move_direction.z * move_speed
+			# Soft handoff into loco — keep a slice of dodge momentum, not a hard stop/snap.
+			var carry := dodge_direction * dodge_speed * 0.35
+			if not move_direction.is_zero_approx():
+				velocity.x = move_direction.x * move_speed + carry.x * 0.25
+				velocity.z = move_direction.z * move_speed + carry.z * 0.25
+			else:
+				velocity.x = carry.x
+				velocity.z = carry.z
 			_set_state(resume_state)
 	elif state == State.ATTACK:
 		_handle_attack_cancel(can_act, move_direction, resume_state, attack_edge)
-	elif state == State.HURT and state_time >= hurt_duration:
+	elif state == State.HURT and state_time >= _hurt_play_duration:
 		_set_state(resume_state)
 	elif state == State.GRAB:
 		_handle_grab_input(can_act, move_input, attack_edge)
-	elif state == State.THROW and state_time >= 0.45:
-		_release_grab(false)
-		_set_state(resume_state)
+	elif state == State.THROW:
+		if not _throw_released and state_time >= 0.18:
+			_release_pending_throw()
+		if state_time >= 0.45:
+			if not _throw_released:
+				_release_pending_throw()
+			_set_state(resume_state)
 	elif state == State.WALL_SLAM and state_time >= 1.0:
 		_release_grab(false)
 		_set_state(resume_state)
 	elif state == State.FINISHER and state_time >= (current_move.time if current_move else 2.0) * attack_duration:
 		_release_grab(true)
+		_finisher_cam_blend = 0.0
+		spring_arm.spring_length = 5.0
 		_set_state(resume_state)
 
 
@@ -678,12 +789,22 @@ func _start_throw(move_input: Vector2) -> void:
 	if dir.is_zero_approx():
 		dir = -visuals.global_basis.z
 	dir = dir.normalized()
+	_pending_throw_dir = dir
+	_throw_released = false
 	_set_state(State.THROW, true)
 	_sfx(&"throw", -1.0)
-	_kick_camera(2.4)
-	_rumble(0.4, 0.65, 0.18)
-	if grab_target.has_method("receive_throw"):
-		grab_target.receive_throw(dir * 16.0, self)
+	_kick_camera(2.0)
+	_rumble(0.35, 0.55, 0.12)
+
+
+func _release_pending_throw() -> void:
+	if _throw_released:
+		return
+	_throw_released = true
+	if is_instance_valid(grab_target) and grab_target.has_method("receive_throw"):
+		grab_target.receive_throw(_pending_throw_dir * 16.0, self)
+	_kick_camera(2.6)
+	_rumble(0.45, 0.7, 0.18)
 	_release_grab(false)
 
 
@@ -723,7 +844,14 @@ func _start_finisher(target: Node3D) -> void:
 	_face_target(target)
 	_configure_hitbox(current_move)
 	_set_state(State.FINISHER, true)
-	_fov_punch = -12.0
+	_fov_punch = -10.0
+	_finisher_cam_blend = 1.0
+	# Side offset signed by camera relative to player→target.
+	var to_t := target.global_position - global_position
+	to_t.y = 0.0
+	var cam_right := camera_pivot.global_basis.x
+	cam_right.y = 0.0
+	_finisher_cam_yaw = 0.28 if cam_right.dot(to_t) >= 0.0 else -0.28
 	_sfx(&"finisher_start", -1.0)
 	_kick_camera(2.8)
 	_rumble(0.4, 0.6, 0.2)
@@ -749,6 +877,7 @@ func _release_grab(killed: bool) -> void:
 	grab_target = null
 	grab_stabs = 0
 	_fov_punch = 0.0
+	_finisher_cam_blend = 0.0
 
 
 func _sync_grab_target(delta: float) -> void:
@@ -761,9 +890,13 @@ func _sync_grab_target(delta: float) -> void:
 	if state == State.GRAB or state == State.FINISHER or state == State.WALL_SLAM or (
 		state == State.ATTACK and attack_kind == AttackKind.STAB
 	):
-		var anchor := global_position - visuals.global_basis.z * 0.95
+		var hold_dist := 0.88 if state == State.GRAB else 0.95
+		if state == State.ATTACK and attack_kind == AttackKind.STAB:
+			hold_dist = 0.78  # pull in on stab contact
+		var anchor := global_position - visuals.global_basis.z * hold_dist
 		anchor.y = grab_target.global_position.y
-		grab_target.global_position = grab_target.global_position.lerp(anchor, 1.0 - exp(-18.0 * delta))
+		var pull := 22.0 if state == State.ATTACK and attack_kind == AttackKind.STAB else 18.0
+		grab_target.global_position = grab_target.global_position.lerp(anchor, 1.0 - exp(-pull * delta))
 		if grab_target.get("visuals") is Node3D:
 			var to_player := global_position - grab_target.global_position
 			to_player.y = 0.0
@@ -986,12 +1119,14 @@ func _set_state(next_state: State, force: bool = false) -> void:
 	if state == next_state and not force:
 		return
 	var leaving_attack := state == State.ATTACK and next_state != State.ATTACK
+	var prev := state
 	state = next_state
 	state_time = 0.0
 	attack_hitbox.set_active(false)
 	if state == State.ATTACK:
 		attack_hitbox.begin_swing(self, current_move)
-		_sfx(&"swing", -4.0)
+		var whoosh := -2.0 if current_move and current_move.strength != CombatAttackData.Strength.LIGHT else -4.0
+		_sfx(&"swing", whoosh)
 	elif state == State.DODGE:
 		_sfx(&"dodge", -3.0)
 	elif leaving_attack and state != State.GRAB:
@@ -1000,21 +1135,7 @@ func _set_state(next_state: State, force: bool = false) -> void:
 			combo_queued = false
 			attack_kind = AttackKind.NONE
 	animator.speed_scale = 1.0
-	var animation: StringName = ANIMATIONS[mini(int(state), ANIMATIONS.size() - 1)]
-	if state == State.ATTACK and current_move:
-		animation = current_move.animation
-	elif state == State.GRAB or state == State.THROW or state == State.WALL_SLAM or state == State.FINISHER:
-		animation = &"attack-melee-right"
-	elif state == State.IDLE:
-		animation = &"idle"
-	elif state == State.RUN:
-		animation = &"sprint"
-	elif state == State.DODGE:
-		animation = &"actions/dodge"
-	elif state == State.HURT:
-		animation = &"reactions/hit"
-	elif state == State.DEAD:
-		animation = &"die"
+	var animation := _animation_for_state(state)
 	if not animator.has_animation(animation):
 		animation = &"idle"
 	var length := animator.get_animation(animation).length
@@ -1023,26 +1144,108 @@ func _set_state(next_state: State, force: bool = false) -> void:
 		State.DODGE:
 			playback_speed = length / dodge_duration
 		State.ATTACK:
-			playback_speed = length / _attack_time()
+			var bias := current_move.playback_bias if current_move else 1.0
+			playback_speed = (length / _attack_time()) * bias
 		State.HURT:
-			playback_speed = length / hurt_duration
+			playback_speed = length / maxf(0.08, _hurt_play_duration)
 		State.DEAD:
 			playback_speed = length / 0.6
 		State.GRAB:
-			playback_speed = 0.15
+			playback_speed = 1.0
 		State.THROW:
 			playback_speed = length / 0.45
 		State.WALL_SLAM:
 			playback_speed = length / 1.0
 		State.FINISHER:
 			playback_speed = length / maxf(0.2, attack_duration * current_move.time)
-	var blend := 0.1
-	if state == State.DODGE or state == State.ATTACK or state == State.HURT or _is_locked_interaction():
-		blend = 0.05
+		State.IDLE, State.RUN:
+			playback_speed = 1.0
+	var blend := 0.12
+	if state == State.DODGE or state == State.ATTACK or state == State.HURT:
+		blend = 0.04
+	elif _is_locked_interaction():
+		blend = 0.06
+	elif prev == State.DODGE or prev == State.ATTACK or prev == State.HURT:
+		blend = 0.1
 	animator.play(animation, blend, playback_speed)
 	if force and animator.current_animation == animation:
 		animator.seek(0.0, true)
+	if state == State.IDLE or state == State.RUN:
+		_loco_anim = animation
 	print(State.keys()[state])
+
+
+func _animation_for_state(s: State) -> StringName:
+	match s:
+		State.IDLE:
+			return &"idle"
+		State.RUN:
+			return _loco_anim if _loco_anim == &"walk" or _loco_anim == &"sprint" else &"sprint"
+		State.DODGE:
+			return _dodge_animation_name()
+		State.ATTACK:
+			return current_move.animation if current_move else &"attack-melee-right"
+		State.HURT:
+			return _hurt_animation_name()
+		State.DEAD:
+			return &"die"
+		State.GRAB:
+			return &"actions/grab_hold"
+		State.THROW:
+			return &"actions/throw"
+		State.WALL_SLAM:
+			return &"actions/wall_slam"
+		State.FINISHER:
+			return &"actions/finisher"
+	return &"idle"
+
+
+func _dodge_animation_name() -> StringName:
+	var local := visuals.global_basis.inverse() * dodge_direction
+	local.y = 0.0
+	return CharacterAnimLib.dodge_name(local)
+
+
+func _hurt_animation_name() -> StringName:
+	var local := visuals.global_basis.inverse() * _last_hurt_dir
+	local.y = 0.0
+	var heavy := _last_hurt_dir.length() > 5.5
+	return CharacterAnimLib.hit_name(local, heavy)
+
+
+func _update_locomotion_anim(delta: float) -> void:
+	var ground_speed := Vector2(get_real_velocity().x, get_real_velocity().z).length()
+	var run_threshold := 0.08 if state == State.RUN else 0.14
+	var next_state := State.RUN if ground_speed > run_threshold else State.IDLE
+	if next_state != state:
+		_set_state(next_state)
+		return
+	if state == State.IDLE:
+		animator.speed_scale = 1.0
+		_footstep_left = 0.0
+		return
+	# Match clip playback to horizontal speed to reduce foot sliding.
+	var want: StringName = &"walk" if ground_speed < walk_anim_threshold else &"sprint"
+	if not animator.has_animation(want):
+		want = &"sprint"
+	var ref_speed := move_speed * (0.45 if want == &"walk" else 1.0)
+	animator.speed_scale = clampf(ground_speed / maxf(0.35, ref_speed), 0.35, 1.35)
+	if want != _loco_anim or animator.current_animation != want:
+		_loco_anim = want
+		animator.play(want, 0.14, animator.speed_scale)
+	_footstep_left -= delta
+	if _footstep_left <= 0.0 and ground_speed > 0.4:
+		_sfx(&"footstep", -10.0, 0.1)
+		_footstep_left = footstep_interval * clampf(move_speed / maxf(ground_speed, 0.5), 0.55, 1.4)
+
+
+func _update_finisher_camera(delta: float) -> void:
+	if state == State.FINISHER:
+		_finisher_cam_blend = move_toward(_finisher_cam_blend, 1.0, delta * 3.5)
+	else:
+		_finisher_cam_blend = move_toward(_finisher_cam_blend, 0.0, delta * 4.5)
+	# Closer boom; SpringArm3D collision keeps the lens out of walls.
+	spring_arm.spring_length = lerpf(5.0, 3.55, _finisher_cam_blend)
 
 
 func _on_hurt(event: HitEvent) -> void:
@@ -1051,7 +1254,8 @@ func _on_hurt(event: HitEvent) -> void:
 	_release_grab(false)
 	health = maxf(0.0, health - event.damage)
 	since_damage = 0.0
-	grace_left = hurt_duration + hurt_grace
+	_hurt_play_duration = clampf(0.16 + event.knockback * 0.025, 0.14, 0.32)
+	grace_left = _hurt_play_duration + hurt_grace
 	combo_queued = false
 	heavy_attack = false
 	attack_kind = AttackKind.NONE
@@ -1072,6 +1276,7 @@ func _on_hurt(event: HitEvent) -> void:
 		died.emit()
 		return
 	knockback_velocity = Vector2(away.x, away.z) * event.knockback
+	_last_hurt_dir = away * maxf(event.knockback, 1.0)
 	if not away.is_zero_approx():
 		visuals.rotation.y = atan2(away.x, away.z)
 	_set_state(State.HURT, true)
@@ -1200,9 +1405,10 @@ func _process(delta: float) -> void:
 	camera_impulse_left = maxf(0.0, camera_impulse_left - delta)
 	var elapsed := camera_impulse_duration - camera_impulse_left
 	var strength := camera_impulse_strength * _impulse_scale * pow(camera_impulse_left / camera_impulse_duration, 2.0)
-	camera.h_offset = sin(elapsed * 90.0) * strength
-	camera.v_offset = cos(elapsed * 70.0) * strength * 0.65
-	var target_fov := _fov_base + _fov_punch
+	var side_boom := _finisher_cam_yaw * 0.6 * _finisher_cam_blend
+	camera.h_offset = sin(elapsed * 90.0) * strength + side_boom
+	camera.v_offset = cos(elapsed * 70.0) * strength * 0.65 + 0.12 * _finisher_cam_blend
+	var target_fov := _fov_base + _fov_punch - 6.0 * _finisher_cam_blend
 	camera.fov = lerpf(camera.fov, target_fov, 1.0 - exp(-8.0 * delta))
 	if raging:
 		_overlay.albedo_color = Color(1.0, 0.12, 0.05, 0.28 + 0.1 * sin(Time.get_ticks_msec() * 0.02))

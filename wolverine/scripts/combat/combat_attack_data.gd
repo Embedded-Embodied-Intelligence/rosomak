@@ -33,6 +33,8 @@ var limb: int = 0
 ## Slight forward drive during active (advancing heavy / lunge).
 var advance_speed: float = 0.0
 var kill_slow_mo: float = 0.0
+## Playback bias: >1 speeds the clip slightly within the same move time (snappier recovery feel).
+var playback_bias: float = 1.0
 
 
 static func make(
@@ -73,44 +75,53 @@ static func make(
 	d.magnetism = float(extras.get("magnetism", 1.0))
 	d.advance_speed = float(extras.get("advance_speed", 0.0))
 	d.kill_slow_mo = float(extras.get("kill_slow_mo", 0.0))
+	d.playback_bias = float(extras.get("playback_bias", 1.0))
 	return d
 
 
-## Canonical player moveset — tuned for Xbox RT light / RB heavy claw feel.
+## Canonical player moveset — distinct L1/L2/L3 choreography with readable anticipation.
 static func light_1() -> CombatAttackData:
 	return make(
 		&"light_1", 20, 0.85, 0.42, 0.58, 0.28, 0.70, 0.05, 2.4,
 		Strength.LIGHT, BloodTier.LIGHT_FLESH, &"attack-melee-right", 0,
-		{magnetism = 0.9, camera_impulse = 1.0, rumble_weak = 0.18, rumble_strong = 0.26}
+		{
+			magnetism = 0.9, camera_impulse = 1.05, rumble_weak = 0.18, rumble_strong = 0.26,
+			advance_speed = 1.4, playback_bias = 1.02
+		}
 	)
 
 
 static func light_2() -> CombatAttackData:
 	return make(
-		&"light_2", 26, 0.92, 0.34, 0.54, 0.22, 0.64, 0.065, 3.1,
+		&"light_2", 26, 0.86, 0.30, 0.50, 0.20, 0.62, 0.06, 3.1,
 		Strength.LIGHT, BloodTier.LIGHT_FLESH, &"attack-melee-left", 1,
-		{magnetism = 0.95, camera_impulse = 1.3, rumble_weak = 0.22, rumble_strong = 0.34, rumble_duration = 0.11}
+		{
+			magnetism = 0.95, camera_impulse = 1.35, rumble_weak = 0.22, rumble_strong = 0.34,
+			rumble_duration = 0.11, advance_speed = 2.0, playback_bias = 1.08
+		}
 	)
 
 
 static func light_3() -> CombatAttackData:
 	return make(
-		&"light_3", 38, 1.12, 0.32, 0.58, 0.45, 0.78, 0.1, 4.8,
-		Strength.LIGHT, BloodTier.HEAVY_FLESH, &"attack-melee-right", 0,
+		&"light_3", 38, 1.05, 0.28, 0.55, 0.48, 0.76, 0.095, 4.8,
+		Strength.LIGHT, BloodTier.HEAVY_FLESH, &"attack-kick-right", 2,
 		{
-			magnetism = 1.05, camera_impulse = 2.1, rumble_weak = 0.32, rumble_strong = 0.5,
-			rumble_duration = 0.16, kill_slow_mo = 0.14, can_dodge_cancel_late = true
+			magnetism = 1.08, camera_impulse = 2.15, rumble_weak = 0.34, rumble_strong = 0.52,
+			rumble_duration = 0.16, kill_slow_mo = 0.14, can_dodge_cancel_late = true,
+			advance_speed = 2.8, playback_bias = 0.95
 		}
 	)
 
 
 static func heavy() -> CombatAttackData:
 	return make(
-		&"heavy", 52, 1.35, 0.42, 0.62, 1.0, 0.82, 0.09, 7.2,
+		&"heavy", 52, 1.28, 0.46, 0.64, 1.0, 0.80, 0.095, 7.2,
 		Strength.HEAVY, BloodTier.HEAVY_FLESH, &"attack-kick-right", 2,
 		{
-			magnetism = 1.05, camera_impulse = 2.2, rumble_weak = 0.35, rumble_strong = 0.55,
-			rumble_duration = 0.16, kill_slow_mo = 0.18, can_dodge_cancel_late = true
+			magnetism = 1.05, camera_impulse = 2.35, rumble_weak = 0.36, rumble_strong = 0.58,
+			rumble_duration = 0.17, kill_slow_mo = 0.18, can_dodge_cancel_late = true,
+			playback_bias = 0.92
 		}
 	)
 
@@ -118,63 +129,68 @@ static func heavy() -> CombatAttackData:
 static func heavy_advance() -> CombatAttackData:
 	var d := heavy()
 	d.id = &"heavy_advance"
-	d.advance_speed = 4.5
+	d.advance_speed = 5.0
 	d.magnetism = 1.15
 	d.knockback = 6.4
+	d.startup = 0.40
 	return d
 
 
 static func lunge() -> CombatAttackData:
 	return make(
-		&"lunge", 48, 1.2, 0.30, 0.55, 1.0, 0.80, 0.08, 6.5,
+		&"lunge", 48, 1.1, 0.26, 0.52, 1.0, 0.78, 0.085, 6.5,
 		Strength.HEAVY, BloodTier.HEAVY_FLESH, &"attack-kick-right", 2,
 		{
-			magnetism = 1.35, advance_speed = 0.0, camera_impulse = 2.0,
-			rumble_weak = 0.3, rumble_strong = 0.5, rumble_duration = 0.14, kill_slow_mo = 0.16
+			magnetism = 1.4, advance_speed = 0.0, camera_impulse = 2.1,
+			rumble_weak = 0.32, rumble_strong = 0.52, rumble_duration = 0.14,
+			kill_slow_mo = 0.16, playback_bias = 1.05
 		}
 	)
 
 
 static func counter() -> CombatAttackData:
 	return make(
-		&"counter", 40, 0.7, 0.18, 0.42, 1.0, 0.75, 0.1, 5.5,
+		&"counter", 40, 0.65, 0.16, 0.40, 1.0, 0.72, 0.1, 5.5,
 		Strength.COUNTER, BloodTier.HEAVY_FLESH, &"attack-melee-left", 1,
 		{
-			magnetism = 1.2, camera_impulse = 2.4, rumble_weak = 0.4, rumble_strong = 0.7,
-			rumble_duration = 0.18, kill_slow_mo = 0.2, can_dodge_cancel_late = false
+			magnetism = 1.25, camera_impulse = 2.5, rumble_weak = 0.42, rumble_strong = 0.72,
+			rumble_duration = 0.18, kill_slow_mo = 0.2, can_dodge_cancel_late = false,
+			playback_bias = 1.12
 		}
 	)
 
 
 static func grab_stab() -> CombatAttackData:
 	return make(
-		&"grab_stab", 34, 1.0, 0.28, 0.45, 1.0, 0.88, 0.14, 1.2,
-		Strength.HEAVY, BloodTier.HEAVY_FLESH, &"attack-melee-right", 0,
+		&"grab_stab", 34, 0.72, 0.32, 0.48, 1.0, 0.86, 0.14, 1.2,
+		Strength.HEAVY, BloodTier.HEAVY_FLESH, &"actions/stab", 0,
 		{
-			magnetism = 0.0, camera_impulse = 2.3, rumble_weak = 0.5, rumble_strong = 0.8,
-			rumble_duration = 0.22, can_dodge_cancel_late = false
+			magnetism = 0.0, camera_impulse = 2.4, rumble_weak = 0.52, rumble_strong = 0.82,
+			rumble_duration = 0.22, can_dodge_cancel_late = false, playback_bias = 1.0
 		}
 	)
 
 
 static func wall_slam() -> CombatAttackData:
 	return make(
-		&"wall_slam", 45, 1.0, 0.40, 0.55, 1.0, 0.9, 0.11, 3.0,
-		Strength.HEAVY, BloodTier.WALL, &"attack-melee-right", 0,
+		&"wall_slam", 45, 1.0, 0.38, 0.55, 1.0, 0.9, 0.12, 3.0,
+		Strength.HEAVY, BloodTier.WALL, &"actions/wall_slam", 0,
 		{
-			magnetism = 0.0, camera_impulse = 2.6, rumble_weak = 0.5, rumble_strong = 0.75,
+			magnetism = 0.0, camera_impulse = 2.7, rumble_weak = 0.5, rumble_strong = 0.78,
 			rumble_duration = 0.22, kill_slow_mo = 0.12, can_dodge_cancel_late = false
 		}
 	)
 
 
 static func signature_finisher() -> CombatAttackData:
+	## ~1.9s total at default attack_duration 0.5 (time * duration).
 	return make(
-		&"signature_finisher", 999, 2.0, 0.55, 0.68, 1.0, 0.95, 0.18, 2.0,
-		Strength.FINISHER, BloodTier.FINISHER, &"attack-melee-right", 0,
+		&"signature_finisher", 999, 3.8, 0.48, 0.62, 1.0, 0.94, 0.2, 2.0,
+		Strength.FINISHER, BloodTier.FINISHER, &"actions/finisher", 0,
 		{
-			magnetism = 0.0, camera_impulse = 3.0, rumble_weak = 0.55, rumble_strong = 0.9,
-			rumble_duration = 0.28, kill_slow_mo = 0.22, can_dodge_cancel_late = false
+			magnetism = 0.0, camera_impulse = 3.2, rumble_weak = 0.58, rumble_strong = 0.92,
+			rumble_duration = 0.3, kill_slow_mo = 0.22, can_dodge_cancel_late = false,
+			playback_bias = 1.0
 		}
 	)
 

@@ -1,11 +1,12 @@
 class_name SlashTrail
 extends MeshInstance3D
 
-## Cheap claw slash ribbon attached for active frames. Procedural placeholder.
+## Cheap claw slash ribbon attached for active frames. Animation-driven lifetime.
 
 var life: float = 0.18
 var age: float = 0.0
 var _mat: StandardMaterial3D
+var _base_size := Vector3(0.045, 0.38, 0.015)
 
 
 static func attach(parent: Node3D, strength: int) -> SlashTrail:
@@ -13,24 +14,27 @@ static func attach(parent: Node3D, strength: int) -> SlashTrail:
 	var box := BoxMesh.new()
 	match strength:
 		CombatAttackData.Strength.FINISHER:
-			box.size = Vector3(0.08, 0.55, 0.02)
-			trail.life = 0.28
+			box.size = Vector3(0.09, 0.62, 0.022)
+			trail.life = 0.3
 		CombatAttackData.Strength.HEAVY, CombatAttackData.Strength.COUNTER:
-			box.size = Vector3(0.06, 0.48, 0.018)
-			trail.life = 0.22
+			box.size = Vector3(0.065, 0.52, 0.02)
+			trail.life = 0.24
 		_:
-			box.size = Vector3(0.045, 0.38, 0.015)
+			box.size = Vector3(0.045, 0.4, 0.015)
+			trail.life = 0.16
+	trail._base_size = box.size
 	trail.mesh = box
 	trail._mat = StandardMaterial3D.new()
 	trail._mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	trail._mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-	trail._mat.albedo_color = Color(0.85, 0.9, 1.0, 0.55)
+	trail._mat.albedo_color = Color(0.9, 0.93, 1.0, 0.62)
 	trail._mat.emission_enabled = true
-	trail._mat.emission = Color(0.5, 0.65, 0.85)
-	trail._mat.emission_energy_multiplier = 1.2
+	trail._mat.emission = Color(0.55, 0.7, 0.95)
+	trail._mat.emission_energy_multiplier = 1.45
 	trail.material_override = trail._mat
 	trail.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	trail.position = Vector3(0.0, -0.15, 0.05)
+	trail.position = Vector3(0.0, -0.2, 0.06)
+	trail.rotation_degrees = Vector3(8.0, 0.0, 0.0)
 	parent.add_child(trail)
 	return trail
 
@@ -41,5 +45,6 @@ func _process(delta: float) -> void:
 	if t >= 1.0:
 		queue_free()
 		return
-	_mat.albedo_color.a = lerpf(0.55, 0.0, t)
-	scale.y = lerpf(1.0, 1.35, t)
+	_mat.albedo_color.a = lerpf(0.62, 0.0, t * t)
+	_mat.emission_energy_multiplier = lerpf(1.45, 0.2, t)
+	scale = Vector3(lerpf(1.0, 0.4, t), lerpf(1.0, 1.45, t), lerpf(1.0, 0.5, t))

@@ -79,6 +79,11 @@ func _build_sounds() -> void:
 		func() -> AudioStreamWAV: return _whoosh(0.2, 0.04, 1.7),
 		func() -> AudioStreamWAV: return _whoosh(0.16, 0.06, 1.4),
 	])
+	_add_variants(&"footstep", [
+		func() -> AudioStreamWAV: return _footstep(0.08, 0.55),
+		func() -> AudioStreamWAV: return _footstep(0.09, 0.5),
+		func() -> AudioStreamWAV: return _footstep(0.07, 0.6),
+	])
 	_add_variants(&"hit", [
 		func() -> AudioStreamWAV: return _impact(0.16, 150.0, 45.0, 26.0),
 		func() -> AudioStreamWAV: return _impact(0.15, 170.0, 50.0, 28.0),
@@ -169,6 +174,14 @@ func _build_sounds() -> void:
 		return randf_range(-1.0, 1.0) * exp(-t * 55.0) * 0.8
 	)
 	_streams[&"mission_complete"] = _chime([523.25, 659.25, 783.99, 1046.5], 1.4)
+
+
+func _footstep(duration: float, amp: float) -> AudioStreamWAV:
+	return _render(duration, func(t: float, p: float) -> float:
+		var thump := sin(TAU * t * lerpf(110.0, 55.0, p)) * exp(-t * 55.0)
+		var grit := randf_range(-1.0, 1.0) * exp(-t * 80.0)
+		return (thump * 0.7 + grit * 0.35) * amp * (1.0 - p)
+	)
 
 
 func _whoosh(duration: float, filter: float, amp: float) -> AudioStreamWAV:
