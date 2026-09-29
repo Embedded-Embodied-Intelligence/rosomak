@@ -203,5 +203,42 @@ func _run() -> void:
 	_axis(JOY_AXIS_RIGHT_X, 0.0)
 	await _frames(40)
 	_check(player.state == PLAYER.State.IDLE and not player.attack_hitbox.active, "holding A does not repeat dodge or enable attacks")
+
+	# Heavy (RB) is a separate swing from the light string.
+	await _fresh()
+	var heavy := InputEventJoypadButton.new()
+	heavy.device = 0
+	heavy.button_index = JOY_BUTTON_RIGHT_SHOULDER
+	heavy.pressed = true
+	Input.parse_input_event(heavy)
+	Input.flush_buffered_events()
+	await _frames(2)
+	_check(player.state == PLAYER.State.ATTACK and player.heavy_attack, "RB starts a heavy attack")
+	await _wait_for_hit()
+	_check(landed == 1 and enemy.health == 55, "heavy deals 45 damage once")
+	heavy.pressed = false
+	Input.parse_input_event(heavy)
+	Input.flush_buffered_events()
+	await _frames(50)
+	_check(player.state == PLAYER.State.IDLE, "heavy recovers to idle")
+
+	# Dodge i-frames reject hurtbox damage during the active window.
+	await _fresh(Vector3(0, 0.03, 2))
+	_dodge(true)
+	await _frames(6)
+	_check(player.is_invulnerable and not player.hurtbox.enabled, "dodge opens i-frames and disables hurtbox")
+	var accepted := player.hurtbox.receive_hit(20, Vector3(0, 0, 0), 0.05, 2.0)
+	_check(not accepted and player.health == player.max_health, "dodge i-frames negate incoming damage")
+	_dodge(false)
+	await _frames(40)
+
+	# Out-of-combat regen after the configured delay.
+	await _fresh()
+	player.health = 50.0
+	player.since_damage = 3.5
+	player._shown_health = 50
+	await _frames(60)
+	_check(player.health > 55.0 and player.health <= player.max_health, "regen restores HP after delay")
+
 	print("RESULT: %d checks, %d failures" % [checks, failures])
 	quit(0 if failures == 0 else 1)
