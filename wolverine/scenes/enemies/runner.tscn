@@ -1,0 +1,22 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="PackedScene" path="res://scenes/enemy.tscn" id="1_base"]
+
+[node name="Runner" instance=ExtResource("1_base")]
+max_health = 35
+body_scale = 0.85
+body_color = Color(0.3, 0.72, 0.36, 1)
+move_speed = 4.8
+move_animation = &"sprint"
+move_animation_speed = 5.0
+stagger_duration = 0.3
+attack_range = 1.4
+attack_damage = 8
+attack_knockback = 3.0
+attack_animation = &"attack-melee-left"
+attack_limb = &"arm-left"
+windup_time = 0.38
+strike_time = 0.25
+recover_time = 0.45
+lunge_speed = 5.0
+cooldown_range = Vector2(0.3, 0.9)

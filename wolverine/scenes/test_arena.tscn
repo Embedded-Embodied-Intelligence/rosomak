@@ -1,6 +1,7 @@
-[gd_scene load_steps=14 format=3]
+[gd_scene load_steps=15 format=3]
 
 [ext_resource type="PackedScene" path="res://scenes/player.tscn" id="1_player"]
+[ext_resource type="PackedScene" path="res://scenes/training_enemy.tscn" id="2_enemy"]
 
 [sub_resource type="Environment" id="Environment_arena"]
 background_mode = 1
@@ -138,3 +139,6 @@ shape = SubResource("Shape_block")
 
 [node name="Player" parent="." instance=ExtResource("1_player")]
 position = Vector3(0, 0.5, 5)
+
+[node name="TrainingEnemy" parent="." instance=ExtResource("2_enemy")]
+position = Vector3(0, 0.5, 0)

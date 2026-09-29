@@ -1,31 +1,24 @@
-[gd_scene load_steps=7 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/player.gd" id="1_player"]
+[ext_resource type="PackedScene" path="res://assets/kenney/figurine-cube-detailed.glb" id="2_humanoid"]
+[ext_resource type="Script" path="res://scripts/melee_hitbox.gd" id="3_hitbox"]
+[ext_resource type="Script" path="res://scripts/hurtbox.gd" id="4_hurtbox"]
 
 [sub_resource type="CapsuleShape3D" id="CapsuleShape_player"]
 radius = 0.4
 height = 1.8
 
-[sub_resource type="StandardMaterial3D" id="Material_player"]
-albedo_color = Color(0.88, 0.57, 0.12, 1)
-roughness = 0.85
+[sub_resource type="SphereShape3D" id="Shape_hitbox"]
+radius = 0.42
 
-[sub_resource type="CapsuleMesh" id="CapsuleMesh_player"]
-material = SubResource("Material_player")
-radius = 0.4
+[sub_resource type="CapsuleShape3D" id="Shape_hurtbox"]
+radius = 0.42
 height = 1.8
-radial_segments = 16
-rings = 8
-
-[sub_resource type="StandardMaterial3D" id="Material_facing"]
-albedo_color = Color(0.12, 0.16, 0.2, 1)
-roughness = 1.0
-
-[sub_resource type="BoxMesh" id="BoxMesh_facing"]
-material = SubResource("Material_facing")
-size = Vector3(0.32, 0.22, 0.25)
 
 [node name="Player" type="CharacterBody3D"]
+collision_layer = 2
+collision_mask = 5
 floor_snap_length = 0.2
 script = ExtResource("1_player")
 
@@ -35,13 +28,30 @@ shape = SubResource("CapsuleShape_player")
 
 [node name="Visuals" type="Node3D" parent="."]
 
-[node name="Body" type="MeshInstance3D" parent="Visuals"]
-position = Vector3(0, 0.9, 0)
-mesh = SubResource("CapsuleMesh_player")
+[node name="Humanoid" parent="Visuals" instance=ExtResource("2_humanoid")]
+rotation = Vector3(0, 3.1415927, 0)
+scale = Vector3(3, 3, 3)
 
-[node name="FacingMarker" type="MeshInstance3D" parent="Visuals"]
-position = Vector3(0, 1.3, -0.4)
-mesh = SubResource("BoxMesh_facing")
+[node name="AttackHitbox" type="Area3D" parent="Visuals"]
+collision_layer = 16
+collision_mask = 8
+monitoring = false
+monitorable = false
+script = ExtResource("3_hitbox")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Visuals/AttackHitbox"]
+shape = SubResource("Shape_hitbox")
+disabled = true
+
+[node name="Hurtbox" type="Area3D" parent="."]
+position = Vector3(0, 0.9, 0)
+collision_layer = 32
+collision_mask = 0
+monitoring = false
+script = ExtResource("4_hurtbox")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Hurtbox"]
+shape = SubResource("Shape_hurtbox")
 
 [node name="CameraPivot" type="Node3D" parent="."]
 position = Vector3(0, 1.4, 0)

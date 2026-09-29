@@ -1,0 +1,282 @@
+[gd_scene load_steps=22 format=3]
+
+[ext_resource type="Script" path="res://scripts/game.gd" id="1_game"]
+[ext_resource type="PackedScene" path="res://scenes/player.tscn" id="2_player"]
+[ext_resource type="Script" path="res://scripts/hud.gd" id="3_hud"]
+[ext_resource type="Shader" path="res://shaders/floor_grid.gdshader" id="4_floor"]
+
+[sub_resource type="Environment" id="Environment_arena"]
+background_mode = 1
+background_color = Color(0.07, 0.06, 0.08, 1)
+ambient_light_source = 3
+ambient_light_color = Color(0.72, 0.7, 0.8, 1)
+ambient_light_energy = 0.55
+reflected_light_source = 2
+tonemap_mode = 2
+fog_enabled = true
+fog_light_color = Color(0.16, 0.1, 0.1, 1)
+fog_density = 0.012
+
+[sub_resource type="ShaderMaterial" id="Material_floor"]
+shader = ExtResource("4_floor")
+
+[sub_resource type="StandardMaterial3D" id="Material_wall"]
+albedo_color = Color(0.2, 0.19, 0.22, 1)
+roughness = 1.0
+
+[sub_resource type="StandardMaterial3D" id="Material_pillar"]
+albedo_color = Color(0.33, 0.3, 0.3, 1)
+roughness = 1.0
+
+[sub_resource type="StandardMaterial3D" id="Material_gate"]
+albedo_color = Color(0.05, 0.02, 0.02, 1)
+emission_enabled = true
+emission = Color(0.9, 0.22, 0.08, 1)
+emission_energy_multiplier = 0.9
+
+[sub_resource type="StandardMaterial3D" id="Material_crate"]
+albedo_color = Color(0.45, 0.32, 0.2, 1)
+roughness = 1.0
+
+[sub_resource type="BoxMesh" id="Mesh_floor"]
+material = SubResource("Material_floor")
+size = Vector3(34, 1, 34)
+
+[sub_resource type="BoxShape3D" id="Shape_floor"]
+size = Vector3(34, 1, 34)
+
+[sub_resource type="BoxMesh" id="Mesh_wall_x"]
+material = SubResource("Material_wall")
+size = Vector3(34, 4, 1)
+
+[sub_resource type="BoxShape3D" id="Shape_wall_x"]
+size = Vector3(34, 4, 1)
+
+[sub_resource type="BoxMesh" id="Mesh_wall_z"]
+material = SubResource("Material_wall")
+size = Vector3(1, 4, 32)
+
+[sub_resource type="BoxShape3D" id="Shape_wall_z"]
+size = Vector3(1, 4, 32)
+
+[sub_resource type="BoxMesh" id="Mesh_pillar"]
+material = SubResource("Material_pillar")
+size = Vector3(1.4, 4, 1.4)
+
+[sub_resource type="BoxShape3D" id="Shape_pillar"]
+size = Vector3(1.4, 4, 1.4)
+
+[sub_resource type="BoxMesh" id="Mesh_crate"]
+material = SubResource("Material_crate")
+size = Vector3(1.6, 1.0, 1.6)
+
+[sub_resource type="BoxShape3D" id="Shape_crate"]
+size = Vector3(1.6, 1.0, 1.6)
+
+[sub_resource type="BoxMesh" id="Mesh_gate"]
+material = SubResource("Material_gate")
+size = Vector3(3.4, 3.2, 0.1)
+
+[node name="Game" type="Node3D"]
+script = ExtResource("1_game")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Environment_arena")
+
+[node name="Sun" type="DirectionalLight3D" parent="."]
+rotation = Vector3(-0.9, -0.7, 0)
+light_color = Color(1, 0.86, 0.72, 1)
+light_energy = 1.0
+shadow_enabled = true
+directional_shadow_max_distance = 45.0
+
+[node name="Geometry" type="Node3D" parent="."]
+
+[node name="Floor" type="StaticBody3D" parent="Geometry"]
+position = Vector3(0, -0.5, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/Floor"]
+mesh = SubResource("Mesh_floor")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/Floor"]
+shape = SubResource("Shape_floor")
+
+[node name="NorthWall" type="StaticBody3D" parent="Geometry"]
+position = Vector3(0, 2, -16.5)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/NorthWall"]
+mesh = SubResource("Mesh_wall_x")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/NorthWall"]
+shape = SubResource("Shape_wall_x")
+
+[node name="SouthWall" type="StaticBody3D" parent="Geometry"]
+position = Vector3(0, 2, 16.5)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/SouthWall"]
+mesh = SubResource("Mesh_wall_x")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/SouthWall"]
+shape = SubResource("Shape_wall_x")
+
+[node name="WestWall" type="StaticBody3D" parent="Geometry"]
+position = Vector3(-16.5, 2, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/WestWall"]
+mesh = SubResource("Mesh_wall_z")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/WestWall"]
+shape = SubResource("Shape_wall_z")
+
+[node name="EastWall" type="StaticBody3D" parent="Geometry"]
+position = Vector3(16.5, 2, 0)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/EastWall"]
+mesh = SubResource("Mesh_wall_z")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/EastWall"]
+shape = SubResource("Shape_wall_z")
+
+[node name="Pillar1" type="StaticBody3D" parent="Geometry"]
+position = Vector3(-7, 2, -7)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/Pillar1"]
+mesh = SubResource("Mesh_pillar")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/Pillar1"]
+shape = SubResource("Shape_pillar")
+
+[node name="Pillar2" type="StaticBody3D" parent="Geometry"]
+position = Vector3(7, 2, -7)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/Pillar2"]
+mesh = SubResource("Mesh_pillar")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/Pillar2"]
+shape = SubResource("Shape_pillar")
+
+[node name="Pillar3" type="StaticBody3D" parent="Geometry"]
+position = Vector3(-7, 2, 7)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/Pillar3"]
+mesh = SubResource("Mesh_pillar")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/Pillar3"]
+shape = SubResource("Shape_pillar")
+
+[node name="Pillar4" type="StaticBody3D" parent="Geometry"]
+position = Vector3(7, 2, 7)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/Pillar4"]
+mesh = SubResource("Mesh_pillar")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/Pillar4"]
+shape = SubResource("Shape_pillar")
+
+[node name="Crate1" type="StaticBody3D" parent="Geometry"]
+position = Vector3(-11, 0.5, 1)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/Crate1"]
+mesh = SubResource("Mesh_crate")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/Crate1"]
+shape = SubResource("Shape_crate")
+
+[node name="Crate2" type="StaticBody3D" parent="Geometry"]
+position = Vector3(11.5, 0.5, -2)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/Crate2"]
+mesh = SubResource("Mesh_crate")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/Crate2"]
+shape = SubResource("Shape_crate")
+
+[node name="Crate3" type="StaticBody3D" parent="Geometry"]
+position = Vector3(1, 0.5, -11.5)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/Crate3"]
+mesh = SubResource("Mesh_crate")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/Crate3"]
+shape = SubResource("Shape_crate")
+
+[node name="Crate4" type="StaticBody3D" parent="Geometry"]
+position = Vector3(-2, 0.5, 11)
+
+[node name="Mesh" type="MeshInstance3D" parent="Geometry/Crate4"]
+mesh = SubResource("Mesh_crate")
+
+[node name="Collision" type="CollisionShape3D" parent="Geometry/Crate4"]
+shape = SubResource("Shape_crate")
+
+[node name="Gates" type="Node3D" parent="."]
+
+[node name="SpawnPoints" type="Node3D" parent="."]
+
+[node name="North" type="MeshInstance3D" parent="Gates"]
+position = Vector3(0, 1.6, -15.95)
+rotation = Vector3(0, 0, 0)
+cast_shadow = 0
+mesh = SubResource("Mesh_gate")
+
+[node name="NorthGlow" type="OmniLight3D" parent="Gates"]
+position = Vector3(0.0, 1.8, -14.700000000000001)
+light_color = Color(1, 0.35, 0.15, 1)
+light_energy = 1.6
+omni_range = 7.0
+
+[node name="North" type="Marker3D" parent="SpawnPoints"]
+position = Vector3(0, 0, -14)
+
+[node name="South" type="MeshInstance3D" parent="Gates"]
+position = Vector3(0, 1.6, 15.95)
+rotation = Vector3(0, 3.1415927, 0)
+cast_shadow = 0
+mesh = SubResource("Mesh_gate")
+
+[node name="SouthGlow" type="OmniLight3D" parent="Gates"]
+position = Vector3(0.0, 1.8, 14.700000000000001)
+light_color = Color(1, 0.35, 0.15, 1)
+light_energy = 1.6
+omni_range = 7.0
+
+[node name="South" type="Marker3D" parent="SpawnPoints"]
+position = Vector3(0, 0, 14)
+
+[node name="West" type="MeshInstance3D" parent="Gates"]
+position = Vector3(-15.95, 1.6, 0)
+rotation = Vector3(0, 1.5707964, 0)
+cast_shadow = 0
+mesh = SubResource("Mesh_gate")
+
+[node name="WestGlow" type="OmniLight3D" parent="Gates"]
+position = Vector3(-14.700000000000001, 1.8, 0.0)
+light_color = Color(1, 0.35, 0.15, 1)
+light_energy = 1.6
+omni_range = 7.0
+
+[node name="West" type="Marker3D" parent="SpawnPoints"]
+position = Vector3(-14, 0, 0)
+
+[node name="East" type="MeshInstance3D" parent="Gates"]
+position = Vector3(15.95, 1.6, 0)
+rotation = Vector3(0, -1.5707964, 0)
+cast_shadow = 0
+mesh = SubResource("Mesh_gate")
+
+[node name="EastGlow" type="OmniLight3D" parent="Gates"]
+position = Vector3(14.700000000000001, 1.8, 0.0)
+light_color = Color(1, 0.35, 0.15, 1)
+light_energy = 1.6
+omni_range = 7.0
+
+[node name="East" type="Marker3D" parent="SpawnPoints"]
+position = Vector3(14, 0, 0)
+
+[node name="Enemies" type="Node3D" parent="."]
+
+[node name="Player" parent="." instance=ExtResource("2_player")]
+position = Vector3(0, 0.1, 3)
+
+[node name="Hud" type="CanvasLayer" parent="."]
+script = ExtResource("3_hud")
