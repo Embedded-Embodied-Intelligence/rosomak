@@ -11,7 +11,7 @@ config_version=5
 [application]
 
 config/name="Rosomak"
-run/main_scene="res://scenes/game.tscn"
+run/main_scene="res://scenes/mission/main_menu.tscn"
 run/max_fps=60
 config/features=PackedStringArray("4.7", "GL Compatibility")
 config/icon="res://icon.svg"
