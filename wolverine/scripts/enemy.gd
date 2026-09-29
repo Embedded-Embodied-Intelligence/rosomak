@@ -3,17 +3,17 @@ extends CharacterBody3D
 
 ## A melee brawler: chase, telegraphed windup, strike, recover. Variants (grunt, runner,
 ## brute) are inherited scenes that only override the exported numbers below.
+## StaggerComponent fields live on the enemy for grab resist / finisher eligibility.
 
 signal died(enemy: Enemy)
 
-enum State { SPAWN, CHASE, WINDUP, STRIKE, RECOVER, STAGGER, DEAD, CHEER }
+enum State { SPAWN, CHASE, WINDUP, STRIKE, RECOVER, STAGGER, DEAD, CHEER, GRABBED, THROWN }
+enum DeathStyle { COLLAPSE, KNOCKDOWN, LAUNCH, WALL, FINISHER }
 
 const HEALTH_BAR_SHADER := preload("res://shaders/health_bar.gdshader")
 const SPAWN_TIME := 0.7
 const CORPSE_TIME := 1.4
 
-## Enemies share a few attack slots, so a crowd takes turns instead of stacking hits.
-## Static, so the game resets it when a run starts.
 static var max_attackers: int = 2
 static var attackers: int = 0
 
@@ -23,13 +23,17 @@ static var attackers: int = 0
 @export var body_color := Color(0.85, 0.34, 0.12)
 @export var move_speed: float = 3.0
 @export var move_animation: StringName = &"walk"
-## Speed at which the move animation looks natural at playback speed 1.
 @export var move_animation_speed: float = 2.5
 @export var turn_speed: float = 10.0
-## Hits dealing less damage than this only flinch the enemy instead of staggering it.
+## Hits dealing less damage than this only flinch (legacy armor gate).
 @export var poise: int = 0
 @export_range(0.0, 1.0) var knockback_resistance: float = 0.0
 @export var stagger_duration: float = 0.35
+## StaggerComponent: build toward threshold; heavies resist light stagger/grab.
+@export var stagger_threshold: float = 40.0
+@export var stagger_resist: float = 0.0
+@export var is_heavy: bool = false
+@export var grab_resist_unless_staggered: bool = false
 
 @export_group("Attack")
 @export var attack_range: float = 1.5
@@ -50,12 +54,23 @@ var hit_stop_left: float = 0.0
 var knockback_velocity := Vector2.ZERO
 var attack_cooldown: float = 0.0
 var target: Node3D
+var stagger_build: float = 0.0
 var _has_slot: bool = false
 var _strafe_sign: float = 1.0
 var _flash: float = 0.0
+var _grabber: Node3D
+var _throw_velocity := Vector3.ZERO
+var _wall_bonus_used: bool = false
+var _death_style: DeathStyle = DeathStyle.COLLAPSE
+var _last_hit_strength: int = CombatAttackData.Strength.LIGHT
 var _overlay := StandardMaterial3D.new()
 var _bar_material := ShaderMaterial.new()
 var _bar: MeshInstance3D
+var _debug_label: Label3D
+
+var is_alive: bool:
+	get:
+		return state != State.DEAD
 
 @onready var visuals: Node3D = $Visuals
 @onready var animator: AnimationPlayer = $Visuals/Humanoid/AnimationPlayer
@@ -67,6 +82,12 @@ var _bar: MeshInstance3D
 func _ready() -> void:
 	add_to_group("enemies")
 	health = max_health
+	if grab_resist_unless_staggered == false and (is_heavy or poise >= 25):
+		grab_resist_unless_staggered = true
+	if is_heavy and stagger_resist <= 0.0:
+		stagger_resist = 0.55
+	if is_heavy and stagger_threshold < 70.0:
+		stagger_threshold = 85.0
 	_strafe_sign = 1.0 if randf() < 0.5 else -1.0
 	target = get_tree().get_first_node_in_group("player")
 	hurtbox.enabled = false
@@ -80,16 +101,19 @@ func _ready() -> void:
 
 	animator.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 	animator.add_animation_library(&"reactions", preload("res://animations/enemy_reactions.tres"))
-	# Only enemies use these clips, so looping the shared imported resources is safe.
 	animator.get_animation(&"walk").loop_mode = Animation.LOOP_LINEAR
 	animator.get_animation(&"emote-yes").loop_mode = Animation.LOOP_LINEAR
 	animator.play(&"idle")
 	visuals.scale = Vector3.ONE * body_scale * 0.2
 	_face(_to_target(), 1.0)
+	if DebugCombat.stagger_label:
+		_debug_label = Label3D.new()
+		_debug_label.position = Vector3(0, 2.4 * body_scale, 0)
+		_debug_label.font_size = 22
+		add_child(_debug_label)
 
 
 func _apply_body_scale() -> void:
-	# Scene sub-resources are shared by every instance, so resize private copies.
 	var body := ($CollisionShape3D.shape as CapsuleShape3D).duplicate() as CapsuleShape3D
 	body.radius *= body_scale
 	body.height *= body_scale
@@ -109,7 +133,6 @@ func _setup_materials() -> void:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = body_color
 	material.roughness = 1.0
-	# The overlay carries spawn, hit-flash, and windup telegraph colors.
 	_overlay.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_overlay.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_overlay.albedo_color = Color(1, 1, 1, 0)
@@ -131,19 +154,84 @@ func _setup_health_bar() -> void:
 	add_child(_bar)
 
 
+func can_be_grabbed() -> bool:
+	if state == State.DEAD or state == State.SPAWN or state == State.GRABBED:
+		return false
+	if grab_resist_unless_staggered or is_heavy:
+		return state == State.STAGGER or stagger_build >= stagger_threshold * 0.85
+	return state != State.WINDUP and state != State.STRIKE
+
+
+func is_staggered() -> bool:
+	return state == State.STAGGER
+
+
+func is_finisher_ready() -> bool:
+	if state == State.DEAD or state == State.SPAWN:
+		return false
+	if float(health) / float(max_health) <= 0.22:
+		return true
+	if stagger_build >= stagger_threshold and state == State.STAGGER:
+		return true
+	if is_heavy and health <= int(max_health * 0.35) and state == State.STAGGER:
+		return true
+	return false
+
+
+func enter_grabbed(grabber: Node3D) -> void:
+	_grabber = grabber
+	_release_slot()
+	attack_hitbox.set_active(false)
+	state = State.GRABBED
+	state_time = 0.0
+	knockback_velocity = Vector2.ZERO
+	_throw_velocity = Vector3.ZERO
+	animator.play(&"reactions/hit", 0.05, 0.1)
+	hurtbox.enabled = true
+
+
+func exit_grabbed(_killed: bool) -> void:
+	_grabber = null
+	if state == State.DEAD:
+		return
+	if state == State.GRABBED or state == State.THROWN:
+		if health <= 0:
+			_die(Vector2.ZERO)
+		else:
+			_enter(State.STAGGER)
+
+
+func receive_throw(velocity_xz: Vector3, _thrower: Node3D) -> void:
+	_grabber = null
+	_wall_bonus_used = false
+	_throw_velocity = velocity_xz
+	_throw_velocity.y = 2.5
+	state = State.THROWN
+	state_time = 0.0
+	attack_hitbox.set_active(false)
+	animator.play(&"reactions/hit", 0.03, 0.5)
+	_sfx(&"throw", -4.0)
+
+
 func _physics_process(delta: float) -> void:
-	var stopped := hit_stop_left > 0.0
+	var stopped := hit_stop_left > 0.0 and state != State.THROWN
 	hit_stop_left = maxf(0.0, hit_stop_left - delta)
 	var desired := Vector3.ZERO
 	if not stopped:
 		state_time += delta
 		attack_cooldown = maxf(0.0, attack_cooldown - delta)
 		desired = _think(delta)
-	# Local hit-stop holds the reaction and horizontal motion. Physics/gravity continue.
 	var horizontal := Vector2.ZERO if stopped else Vector2(desired.x, desired.z) + knockback_velocity
+	if state == State.THROWN:
+		horizontal = Vector2(_throw_velocity.x, _throw_velocity.z)
+		velocity.y = _throw_velocity.y
+		_throw_velocity.y += get_gravity().y * delta
+		_throw_velocity.x = move_toward(_throw_velocity.x, 0.0, 8.0 * delta)
+		_throw_velocity.z = move_toward(_throw_velocity.z, 0.0, 8.0 * delta)
+		_check_wall_impact()
 	velocity.x = horizontal.x
 	velocity.z = horizontal.y
-	if not is_on_floor():
+	if state != State.THROWN and not is_on_floor():
 		velocity += get_gravity() * delta
 	move_and_slide()
 	if not stopped:
@@ -153,15 +241,54 @@ func _physics_process(delta: float) -> void:
 			animator.speed_scale = clampf(ground_speed / move_animation_speed, 0.4, 2.0)
 		animator.advance(delta)
 
-	attack_hitbox.global_position = limb.to_global(Vector3(0, -0.2, 0))
-	attack_hitbox.set_active(
-		state == State.STRIKE and state_time >= strike_time * 0.1 and state_time < strike_time * 0.65
-	)
-	attack_hitbox.check_hits()
+	if state != State.GRABBED and state != State.THROWN:
+		attack_hitbox.global_position = limb.to_global(Vector3(0, -0.2, 0))
+		attack_hitbox.set_active(
+			state == State.STRIKE and state_time >= strike_time * 0.1 and state_time < strike_time * 0.65
+		)
+		attack_hitbox.check_hits()
 	_update_overlay(delta)
+	if _debug_label:
+		_debug_label.text = "stg %.0f/%0.f" % [stagger_build, stagger_threshold]
+
+
+func _check_wall_impact() -> void:
+	if _wall_bonus_used or state != State.THROWN:
+		return
+	if get_slide_collision_count() <= 0:
+		return
+	for i in get_slide_collision_count():
+		var col := get_slide_collision(i)
+		if col.get_collider() is StaticBody3D or col.get_collider() is CSGShape3D:
+			_wall_bonus_used = true
+			var event := HitEvent.legacy(22, global_position - col.get_normal(), 0.1, 2.0)
+			event.attack_strength = CombatAttackData.Strength.HEAVY
+			event.blood_tier = CombatAttackData.BloodTier.WALL
+			event.source_move_id = &"wall_throw"
+			event.stagger_bonus = 50.0
+			_apply_damage_only(event)
+			BloodFx.spawn(get_tree(), global_position + Vector3.UP * 0.9, col.get_normal(), CombatAttackData.BloodTier.WALL)
+			_sfx(&"wall_impact", -2.0)
+			stagger_build = stagger_threshold
+			if health <= 0:
+				_death_style = DeathStyle.WALL
+				_die(Vector2(-col.get_normal().x, -col.get_normal().z) * 4.0)
+			else:
+				_enter(State.STAGGER)
+			_throw_velocity = Vector3.ZERO
+			return
 
 
 func _think(delta: float) -> Vector3:
+	if state == State.GRABBED:
+		return Vector3.ZERO
+	if state == State.THROWN:
+		if state_time >= 0.85 or (is_on_floor() and state_time > 0.25 and _throw_velocity.length() < 2.0):
+			if health <= 0:
+				_die(Vector2(_throw_velocity.x, _throw_velocity.z))
+			else:
+				_enter(State.STAGGER)
+		return Vector3.ZERO
 	var to_target := _to_target()
 	var distance := to_target.length()
 	match state:
@@ -182,7 +309,6 @@ func _think(delta: float) -> Vector3:
 			var direction := to_target / distance if distance > 0.01 else Vector3.ZERO
 			var speed := move_speed
 			if distance < attack_range + 1.4:
-				# Waiting for a slot or cooldown: circle at a readable distance instead of crowding.
 				var tangent := Vector3(-direction.z, 0.0, direction.x) * _strafe_sign
 				var spacing := clampf(distance - (attack_range + 0.7), -1.0, 1.0)
 				direction = tangent * 0.8 + direction * spacing
@@ -203,6 +329,7 @@ func _think(delta: float) -> Vector3:
 			if state_time >= recover_time:
 				_enter(State.CHASE)
 		State.STAGGER:
+			stagger_build = maxf(0.0, stagger_build - delta * 12.0)
 			if state_time >= stagger_duration:
 				_enter(State.CHASE)
 		State.DEAD:
@@ -228,7 +355,6 @@ func _enter(next_state: State) -> void:
 		State.CHASE:
 			animator.play(move_animation, 0.15)
 		State.WINDUP:
-			# The first 40% of the swing stretches over the windup as a slow, readable draw.
 			animator.play(attack_animation, 0.1)
 			animator.speed_scale = animator.get_animation(attack_animation).length * 0.4 / windup_time
 			_sfx(&"telegraph", -8.0)
@@ -246,46 +372,100 @@ func _enter(next_state: State) -> void:
 			animator.play(&"emote-yes", 0.3)
 
 
-func _receive_hit(damage: int, source_position: Vector3, hit_stop: float, knockback: float) -> void:
+func _receive_hit(event: HitEvent) -> void:
 	if state == State.DEAD or state == State.SPAWN:
 		return
-	health = maxi(0, health - damage)
-	_flash = 1.0
-	_bar.visible = true
-	_bar_material.set_shader_parameter(&"fill", float(health) / max_health)
-	hit_stop_left = maxf(hit_stop_left, hit_stop)
-	var away := global_position - source_position
-	away.y = 0.0
-	away = away.normalized()
-	var push := Vector2(away.x, away.z) * knockback * (1.0 - knockback_resistance)
-	if health == 0:
+	if state == State.GRABBED and event.source_move_id != &"grab_stab" and event.attack_strength != CombatAttackData.Strength.FINISHER:
+		# Only grab stab / finisher damage while locked, unless wall.
+		if event.source_move_id != &"wall_slam":
+			pass
+	_last_hit_strength = event.attack_strength
+	_apply_damage_only(event)
+	_add_stagger(event)
+	hit_stop_left = maxf(hit_stop_left, event.hit_stop)
+	var away := event.direction
+	if away.is_zero_approx():
+		away = global_position - event.source_position
+		away.y = 0.0
+		away = away.normalized()
+	var resist := knockback_resistance
+	if is_heavy and event.attack_strength == CombatAttackData.Strength.LIGHT:
+		resist = maxf(resist, 0.7)
+	var push := Vector2(away.x, away.z) * event.knockback * (1.0 - resist)
+	if health <= 0:
+		_pick_death_style(event, push)
 		_die(push)
 		return
-	if damage < poise:
-		# Armored: the hit registers, but the current action carries on.
-		knockback_velocity += push * 0.3
+	# Heavy armor: light hits flinch without full interrupt until stagger breaks.
+	var armored := is_heavy or poise > 0
+	var light := event.attack_strength == CombatAttackData.Strength.LIGHT
+	if armored and light and event.damage < maxi(poise, 1) and stagger_build < stagger_threshold:
+		knockback_velocity += push * 0.25
+		_flash = 1.0
+		return
+	if state == State.GRABBED:
+		_flash = 1.0
 		return
 	knockback_velocity = push
 	if not away.is_zero_approx():
 		visuals.rotation.y = atan2(away.x, away.z)
-	# Every hit restarts the stagger, so a full combo keeps the enemy locked.
 	_enter(State.STAGGER)
+
+
+func _apply_damage_only(event: HitEvent) -> void:
+	health = maxi(0, health - event.damage)
+	_flash = 1.0
+	_bar.visible = true
+	_bar_material.set_shader_parameter(&"fill", float(health) / max_health)
+
+
+func _add_stagger(event: HitEvent) -> void:
+	var amount := event.stagger_bonus + float(event.damage) * 0.35
+	amount *= 1.0 - stagger_resist
+	if event.attack_strength == CombatAttackData.Strength.LIGHT and is_heavy:
+		amount *= 0.45
+	stagger_build = minf(stagger_threshold * 1.25, stagger_build + amount)
+
+
+func _pick_death_style(event: HitEvent, push: Vector2) -> void:
+	if event.attack_strength == CombatAttackData.Strength.FINISHER or event.source_move_id == &"signature_finisher":
+		_death_style = DeathStyle.FINISHER
+	elif event.blood_tier == CombatAttackData.BloodTier.WALL or event.source_move_id == &"wall_slam":
+		_death_style = DeathStyle.WALL
+	elif event.attack_strength == CombatAttackData.Strength.HEAVY and push.length() > 4.0:
+		_death_style = DeathStyle.LAUNCH
+	elif push.length() > 2.5:
+		_death_style = DeathStyle.KNOCKDOWN
+	else:
+		_death_style = DeathStyle.COLLAPSE
 
 
 func _die(push: Vector2) -> void:
 	_release_slot()
+	_grabber = null
 	state = State.DEAD
 	state_time = 0.0
 	remove_from_group("enemies")
 	hurtbox.disable()
 	attack_hitbox.set_active(false)
-	# The corpse no longer blocks anyone; its own floor collision remains.
 	set_deferred("collision_layer", 0)
 	set_deferred("collision_mask", 1)
-	knockback_velocity = push * 1.6
+	match _death_style:
+		DeathStyle.LAUNCH:
+			knockback_velocity = push * 2.2
+			animator.play(&"die", 0.04, animator.get_animation(&"die").length / 0.45)
+		DeathStyle.WALL, DeathStyle.FINISHER:
+			knockback_velocity = push * 0.4
+			animator.play(&"die", 0.02, animator.get_animation(&"die").length / 0.7)
+			BloodFx.spawn(get_tree(), global_position + Vector3.UP, Vector3.UP, CombatAttackData.BloodTier.DEATH)
+		DeathStyle.KNOCKDOWN:
+			knockback_velocity = push * 1.8
+			animator.play(&"die", 0.04, animator.get_animation(&"die").length / 0.55)
+		_:
+			knockback_velocity = push * 1.2
+			animator.play(&"die", 0.04, animator.get_animation(&"die").length / 0.55)
 	_bar.visible = false
 	animator.speed_scale = 1.0
-	animator.play(&"die", 0.04, animator.get_animation(&"die").length / 0.55)
 	_sfx(&"enemy_die", -2.0)
 	died.emit(self)
 
@@ -305,7 +485,6 @@ func _update_overlay(delta: float) -> void:
 	if state == State.SPAWN:
 		color = Color(1.0, 0.5, 0.2, 1.0 - state_time / SPAWN_TIME)
 	elif state == State.WINDUP:
-		# Pulses faster as the strike approaches: this is the cue to dodge.
 		var progress := state_time / windup_time
 		var pulse := 0.5 + 0.5 * sin(state_time * lerpf(18.0, 40.0, progress))
 		color = Color(1.0, 0.85, 0.2, lerpf(0.15, 0.65, progress) * pulse + 0.1)

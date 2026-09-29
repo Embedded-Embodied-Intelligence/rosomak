@@ -7,23 +7,24 @@ signal hit_chain_changed(count: int)
 signal hurt(damage: int)
 signal died
 
-enum State { IDLE, RUN, DODGE, ATTACK, HURT, DEAD }
+## Core locomotion + combat. AttackKind covers light string / heavy / lunge / counter /
+## grab interactions while State remains the FSM bucket (ATTACK holds most swings).
+enum State { IDLE, RUN, DODGE, ATTACK, HURT, DEAD, GRAB, THROW, WALL_SLAM, FINISHER }
+enum AttackKind {
+	NONE, LIGHT_1, LIGHT_2, LIGHT_3, HEAVY, LUNGE, COUNTER, STAB
+}
 
 const ANIMATIONS: Array[StringName] = [
 	&"idle", &"sprint", &"actions/dodge", &"attack-melee-right", &"reactions/hit", &"die"
 ]
 const HIT_IMPACT := preload("res://scenes/hit_impact.tscn")
-## Three light claw swings (RT). Buffering chains into the next step.
-const LIGHT_COMBO: Array[Dictionary] = [
-	{animation = &"attack-melee-right", limb = 0, time = 1.0, damage = 25, knockback = 2.4, hit_stop = 0.05},
-	{animation = &"attack-melee-left", limb = 1, time = 0.9, damage = 25, knockback = 2.6, hit_stop = 0.055},
-	{animation = &"attack-melee-right", limb = 0, time = 1.05, damage = 25, knockback = 3.2, hit_stop = 0.06},
-]
-## Dedicated heavy (RB): slower, bigger knockback and hit-stop.
-const HEAVY_ATTACK := {
-	animation = &"attack-kick-right", limb = 2, time = 1.35, damage = 45, knockback = 7.5, hit_stop = 0.07
-}
 const RAGE_MAX := 100.0
+const COUNTER_WINDOW := 0.6
+const GRAB_RANGE := 1.55
+const FINISHER_RANGE := 1.85
+const LUNGE_MIN := 2.0
+const LUNGE_MAX := 4.2
+const WALL_CHECK := 1.35
 
 @export var move_speed: float = 5.0
 @export var acceleration: float = 24.0
@@ -37,28 +38,21 @@ const RAGE_MAX := 100.0
 @export_range(0.1, 2.0) var attack_duration: float = 0.5
 @export_range(0.0, 1.0) var dodge_iframe_start: float = 0.05
 @export_range(0.0, 1.0) var dodge_iframe_end: float = 0.22
-@export_range(0.0, 1.0) var attack_active_start: float = 0.5
-@export_range(0.0, 1.0) var attack_active_end: float = 0.7
 @export_range(0.0, 0.1) var camera_impulse_strength: float = 0.035
 @export_range(0.05, 0.3) var camera_impulse_duration: float = 0.16
 
-@export_group("Combo")
-## A press after this fraction of a swing queues the next light step.
-@export_range(0.0, 1.0) var combo_buffer_start: float = 0.3
-## A queued step starts at this fraction, cancelling the current swing's recovery.
-@export_range(0.0, 1.0) var combo_chain_point: float = 0.8
-@export var aim_assist_range: float = 4.0
-@export_range(0.0, 180.0) var aim_assist_angle: float = 70.0
-@export_range(0.0, 0.5) var lunge_time: float = 0.12
-@export var max_lunge_speed: float = 12.0
+@export_group("Magnetism")
+@export var aim_assist_range: float = 4.2
+@export_range(0.0, 180.0) var aim_assist_angle: float = 65.0
+@export_range(0.0, 0.35) var lunge_time: float = 0.14
+@export var max_lunge_speed: float = 14.0
+@export_range(0.0, 1.0) var max_magnet_yaw: float = 0.55
 
 @export_group("Vitals")
 @export var max_health: int = 100
-## Healing factor: regeneration starts after this long without taking damage.
 @export var regen_delay: float = 3.0
 @export var regen_rate: float = 10.0
 @export_range(0.1, 1.0) var hurt_duration: float = 0.3
-## Extra invulnerability after a hurt reaction, so a crowd cannot juggle the player.
 @export_range(0.0, 2.0) var hurt_grace: float = 0.6
 @export var rage_per_hit: float = 6.0
 @export var rage_duration: float = 8.0
@@ -75,6 +69,8 @@ var camera_impulse_left: float = 0.0
 var combo_step: int = 0
 var combo_queued: bool = false
 var heavy_attack: bool = false
+var attack_kind: AttackKind = AttackKind.NONE
+var current_move: CombatAttackData
 var lunge_velocity := Vector3.ZERO
 var knockback_velocity := Vector2.ZERO
 var health: float
@@ -84,8 +80,14 @@ var since_damage: float = 0.0
 var grace_left: float = 0.0
 var hit_chain: int = 0
 var hit_chain_left: float = 0.0
-## The game disables controls on the title and game-over screens.
 var controls_enabled: bool = true
+var counter_window_left: float = 0.0
+var grab_target: Node3D
+var grab_stabs: int = 0
+var _locked_iframes: bool = false
+var _trail: SlashTrail
+var _fov_base: float = 70.0
+var _fov_punch: float = 0.0
 var _attack_device: int = -1
 var _rumble_device: int = -1
 var _impulse_scale: float = 1.0
@@ -93,9 +95,12 @@ var _mouse_look := Vector2.ZERO
 var _shown_health: int = 0
 var _overlay := StandardMaterial3D.new()
 var _claw_material := StandardMaterial3D.new()
+var _debug_label: Label3D
 
 var is_invulnerable: bool:
 	get:
+		if _locked_iframes:
+			return true
 		return state == State.DODGE and state_time >= dodge_iframe_start and state_time < dodge_iframe_end
 
 var raging: bool:
@@ -123,23 +128,28 @@ var is_alive: bool:
 
 func _ready() -> void:
 	add_to_group("player")
+	DebugCombat.reset_release()
 	health = max_health
 	_shown_health = max_health
-	# The camera should collide with the arena, but not the player's capsule.
+	_fov_base = camera.fov
+	current_move = CombatAttackData.light_1()
 	spring_arm.add_excluded_object(get_rid())
 	animator.add_animation_library(&"actions", preload("res://animations/dodge.tres"))
 	animator.add_animation_library(&"reactions", preload("res://animations/enemy_reactions.tres"))
-	# Advance alongside action timing so hand placement, active frames, and hit-stop agree.
 	animator.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
 	attack_hitbox.hit_landed.connect(_on_hit_landed)
 	hurtbox.hit_received.connect(_on_hurt)
 	_apply_claw_fighter_look()
 	animator.play(ANIMATIONS[state])
+	if DebugCombat.state_label or DebugCombat.combo_label:
+		_debug_label = Label3D.new()
+		_debug_label.position = Vector3(0, 2.2, 0)
+		_debug_label.font_size = 28
+		add_child(_debug_label)
 	print(State.keys()[state])
 
 
 func _apply_claw_fighter_look() -> void:
-	# Original identity: dark tactical body + steel claw blades (not a costume copy).
 	var body := StandardMaterial3D.new()
 	body.albedo_color = Color(0.12, 0.13, 0.15)
 	body.roughness = 0.85
@@ -188,8 +198,10 @@ func _physics_process(delta: float) -> void:
 	if not stopped:
 		state_time += delta
 	dodge_cooldown_left = maxf(0.0, dodge_cooldown_left - delta)
+	counter_window_left = maxf(0.0, counter_window_left - delta)
 	_update_vitals(delta)
-	# Camera input stays live during every action.
+	_sync_grab_target(delta)
+
 	var look_input := Input.get_vector("look_left", "look_right", "look_up", "look_down")
 	camera_pivot.rotation.y = wrapf(
 		camera_pivot.rotation.y - look_input.x * camera_speed * delta - _mouse_look.x, -PI, PI
@@ -201,7 +213,6 @@ func _physics_process(delta: float) -> void:
 	_mouse_look = Vector2.ZERO
 	hurtbox.enabled = state != State.DEAD and not is_invulnerable and grace_left <= 0.0
 	if stopped:
-		# Only this actor's action/pose pauses; physics, gravity, and camera input stay live.
 		velocity.x = 0.0
 		velocity.z = 0.0
 		if not is_on_floor():
@@ -213,46 +224,17 @@ func _physics_process(delta: float) -> void:
 	var move_input := Vector2.ZERO
 	if can_act:
 		move_input = Input.get_vector("move_left", "move_right", "move_forward", "move_back")
-	# The pivot only rotates around Y, so camera pitch never tilts movement.
-	# Preserve the stick magnitude for slow walking and capped diagonal speed.
-	var move_direction := camera_pivot.global_basis * Vector3(move_input.x, 0.0, move_input.y)
-	var resume_state := State.RUN if not move_input.is_zero_approx() else State.IDLE
+	# Locomotion stick is ignored during locked interactions, but grab-throw still reads aim.
+	var loco_input := Vector2.ZERO if _is_locked_interaction() else move_input
+	var move_direction := camera_pivot.global_basis * Vector3(loco_input.x, 0.0, loco_input.y)
+	var resume_state := State.RUN if not loco_input.is_zero_approx() else State.IDLE
 
-	if state == State.DODGE and state_time >= dodge_duration:
-		# End the burst immediately instead of coasting at dodge speed.
-		velocity.x = move_direction.x * move_speed
-		velocity.z = move_direction.z * move_speed
-		_set_state(resume_state)
-	elif state == State.ATTACK:
-		var swing_time := _attack_time()
-		if (
-			can_act and not heavy_attack and Input.is_action_just_pressed("attack")
-			and combo_step < LIGHT_COMBO.size() - 1 and state_time >= swing_time * combo_buffer_start
-		):
-			combo_queued = true
-		if combo_queued and state_time >= swing_time * combo_chain_point:
-			_start_light(combo_step + 1, move_direction)
-		elif state_time >= swing_time:
-			_set_state(resume_state)
-	elif state == State.HURT and state_time >= hurt_duration:
-		_set_state(resume_state)
-
-	# Actions are grounded and never queued from free movement. A wins simultaneous presses.
-	if can_act and (state == State.IDLE or state == State.RUN) and is_on_floor():
-		if Input.is_action_just_pressed("dodge") and dodge_cooldown_left <= 0.0:
-			dodge_direction = move_direction.normalized() if not move_input.is_zero_approx() else -visuals.global_basis.z
-			dodge_cooldown_left = dodge_duration + dodge_cooldown
-			_set_state(State.DODGE)
-		elif Input.is_action_just_pressed("attack_heavy"):
-			_start_heavy(move_direction)
-		elif Input.is_action_just_pressed("attack"):
-			_start_light(0, move_direction)
-	if can_act and Input.is_action_just_pressed("rage") and rage >= RAGE_MAX and not raging:
-		_start_rage()
+	_update_action_states(can_act, move_input, move_direction, resume_state)
+	_try_start_actions(can_act, loco_input, move_direction)
 
 	var target_velocity := move_direction * move_speed
-	var rate := deceleration if move_input.is_zero_approx() else acceleration
-	if state == State.ATTACK or state == State.HURT or state == State.DEAD:
+	var rate := deceleration if loco_input.is_zero_approx() else acceleration
+	if state == State.ATTACK or state == State.HURT or state == State.DEAD or _is_locked_interaction():
 		target_velocity = Vector3.ZERO
 		rate = deceleration
 	var horizontal_velocity := Vector2(velocity.x, velocity.z).move_toward(
@@ -261,14 +243,20 @@ func _physics_process(delta: float) -> void:
 	if state == State.DODGE:
 		horizontal_velocity = Vector2(dodge_direction.x, dodge_direction.z) * dodge_speed
 	elif state == State.ATTACK and not lunge_velocity.is_zero_approx():
-		# The lunge closes the gap to an assisted target, then stops dead to avoid overshoot.
 		horizontal_velocity = Vector2(lunge_velocity.x, lunge_velocity.z)
 		if state_time >= lunge_time:
 			lunge_velocity = Vector3.ZERO
 			horizontal_velocity = Vector2.ZERO
+	elif state == State.ATTACK and current_move and current_move.advance_speed > 0.0:
+		var fwd := -visuals.global_basis.z
+		fwd.y = 0.0
+		if state_time < _attack_time() * current_move.active_end:
+			horizontal_velocity = Vector2(fwd.x, fwd.z) * current_move.advance_speed
 	elif state == State.HURT:
 		horizontal_velocity = knockback_velocity
 		knockback_velocity = knockback_velocity.move_toward(Vector2.ZERO, 14.0 * delta)
+	elif state == State.THROW:
+		horizontal_velocity = Vector2.ZERO
 	velocity.x = horizontal_velocity.x
 	velocity.z = horizontal_velocity.y
 
@@ -278,35 +266,407 @@ func _physics_process(delta: float) -> void:
 	move_and_slide()
 
 	var facing_direction := dodge_direction if state == State.DODGE else move_direction
-	var holds_facing := state == State.ATTACK or state == State.HURT or state == State.DEAD
+	var holds_facing := (
+		state == State.ATTACK or state == State.HURT or state == State.DEAD or _is_locked_interaction()
+	)
 	if not holds_facing and not facing_direction.is_zero_approx():
 		var target_yaw := atan2(-facing_direction.x, -facing_direction.z)
-		# Rotate only the mesh, leaving the camera free to orbit independently.
 		visuals.rotation.y = lerp_angle(
 			visuals.rotation.y, target_yaw, 1.0 - exp(-turn_speed * delta)
 		)
 
 	if state == State.IDLE or state == State.RUN:
-		# Actual motion drives locomotion, so pushing a wall does not run in place.
 		var ground_speed := Vector2(get_real_velocity().x, get_real_velocity().z).length()
 		var run_threshold := 0.08 if state == State.RUN else 0.15
 		_set_state(State.RUN if ground_speed > run_threshold else State.IDLE)
 		animator.speed_scale = clampf(ground_speed / move_speed, 0.25, 1.0) if state == State.RUN else 1.0
 
 	animator.advance(delta)
-	# Follow the animated limb without inheriting the imported model's 3x scale.
-	var move := _current_move()
-	attack_hitbox.global_position = limbs[int(move.limb)].to_global(Vector3(0, -0.2, 0))
-	var swing := _attack_time()
-	attack_hitbox.set_active(
-		state == State.ATTACK
-		and state_time >= swing * attack_active_start
-		and state_time < swing * attack_active_end
+	_update_hitbox_active()
+	_update_debug_label()
+
+
+func _is_locked_interaction() -> bool:
+	return state == State.GRAB or state == State.THROW or state == State.WALL_SLAM or state == State.FINISHER
+
+
+func _update_action_states(
+	can_act: bool, move_input: Vector2, move_direction: Vector3, resume_state: State
+) -> void:
+	if state == State.DODGE:
+		_poll_dodge_counter()
+		if state_time >= dodge_duration:
+			velocity.x = move_direction.x * move_speed
+			velocity.z = move_direction.z * move_speed
+			_set_state(resume_state)
+	elif state == State.ATTACK:
+		_handle_attack_cancel(can_act, move_direction, resume_state)
+	elif state == State.HURT and state_time >= hurt_duration:
+		_set_state(resume_state)
+	elif state == State.GRAB:
+		_handle_grab_input(can_act, move_input)
+	elif state == State.THROW and state_time >= 0.45:
+		_release_grab(false)
+		_set_state(resume_state)
+	elif state == State.WALL_SLAM and state_time >= 1.0:
+		_release_grab(false)
+		_set_state(resume_state)
+	elif state == State.FINISHER and state_time >= (current_move.time if current_move else 2.0) * attack_duration:
+		_release_grab(true)
+		_set_state(resume_state)
+
+
+func _handle_attack_cancel(can_act: bool, move_direction: Vector3, resume_state: State) -> void:
+	var swing_time := _attack_time()
+	var move := current_move
+	var in_active := state_time >= swing_time * move.startup and state_time < swing_time * move.active_end
+	# Buffer next light during combo window; never cancel mid-active into another attack.
+	if (
+		can_act and attack_kind >= AttackKind.LIGHT_1 and attack_kind <= AttackKind.LIGHT_3
+		and Input.is_action_just_pressed("attack")
+		and combo_step < 2 and state_time >= swing_time * move.combo_window
+	):
+		combo_queued = true
+	if can_act and move.can_dodge_cancel_late and not in_active and state_time >= swing_time * move.cancel_window:
+		if Input.is_action_just_pressed("dodge") and dodge_cooldown_left <= 0.0:
+			combo_queued = false
+			dodge_direction = move_direction.normalized() if not move_direction.is_zero_approx() else -visuals.global_basis.z
+			dodge_cooldown_left = dodge_duration + dodge_cooldown
+			_set_state(State.DODGE)
+			return
+	if combo_queued and state_time >= swing_time * move.cancel_window and attack_kind != AttackKind.STAB:
+		_start_light(combo_step + 1, move_direction)
+	elif state_time >= swing_time:
+		if attack_kind == AttackKind.STAB and is_instance_valid(grab_target) and grab_target.get("is_alive") != false and grab_stabs < 2:
+			_set_state(State.GRAB, true)
+		else:
+			if attack_kind == AttackKind.STAB:
+				_release_grab(false)
+			_set_state(resume_state)
+
+
+func _try_start_actions(can_act: bool, move_input: Vector2, move_direction: Vector3) -> void:
+	if not can_act:
+		return
+	# Counter window: RT during post-dodge window.
+	if counter_window_left > 0.0 and Input.is_action_just_pressed("attack") and (
+		state == State.IDLE or state == State.RUN or state == State.DODGE
+	):
+		_start_counter(move_direction)
+		return
+	if _is_locked_interaction():
+		return
+	if state == State.IDLE or state == State.RUN:
+		if not is_on_floor():
+			return
+		if Input.is_action_just_pressed("dodge") and dodge_cooldown_left <= 0.0:
+			dodge_direction = move_direction.normalized() if not move_input.is_zero_approx() else -visuals.global_basis.z
+			dodge_cooldown_left = dodge_duration + dodge_cooldown
+			_set_state(State.DODGE)
+		elif Input.is_action_just_pressed("grab"):
+			_try_contextual_grab(move_direction)
+		elif Input.is_action_just_pressed("attack_heavy"):
+			_start_heavy_or_lunge(move_direction, move_input)
+		elif Input.is_action_just_pressed("attack"):
+			_start_light(0, move_direction)
+	if can_act and Input.is_action_just_pressed("rage") and rage >= RAGE_MAX and not raging:
+		_start_rage()
+
+
+func _poll_dodge_counter() -> void:
+	if not is_invulnerable:
+		return
+	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if not is_instance_valid(enemy):
+			continue
+		if enemy.get("state") != 3: # Enemy.State.STRIKE
+			continue
+		var offset: Vector3 = enemy.global_position - global_position
+		offset.y = 0.0
+		if offset.length() <= 2.4:
+			counter_window_left = COUNTER_WINDOW
+			_sfx(&"counter_ready", -6.0, 0.02)
+			return
+
+
+func _try_contextual_grab(move_direction: Vector3) -> void:
+	var target := _best_grab_target()
+	if target == null:
+		return
+	# Signature finisher when eligible.
+	if _finisher_eligible(target):
+		_start_finisher(target)
+		return
+	# Wall slam when staggered near wall.
+	if _wall_slam_eligible(target):
+		_start_wall_slam(target)
+		return
+	if not _grab_eligible(target):
+		_sfx(&"grab_resist", -4.0)
+		return
+	_start_grab(target, move_direction)
+
+
+func _grab_eligible(target: Node3D) -> bool:
+	if not is_instance_valid(target) or target.get("is_alive") == false:
+		return false
+	if target.has_method("can_be_grabbed"):
+		return target.can_be_grabbed()
+	return true
+
+
+func _finisher_eligible(target: Node3D) -> bool:
+	if not is_instance_valid(target):
+		return false
+	if target.has_method("is_finisher_ready"):
+		return target.is_finisher_ready()
+	var hp: Variant = target.get("health")
+	var max_hp: Variant = target.get("max_health")
+	if hp is int and max_hp is int and max_hp > 0:
+		return float(hp) / float(max_hp) <= 0.22
+	return false
+
+
+func _wall_slam_eligible(target: Node3D) -> bool:
+	if not is_instance_valid(target):
+		return false
+	var staggered := false
+	if target.has_method("is_staggered"):
+		staggered = target.is_staggered()
+	elif int(target.get("state")) == 5:
+		staggered = true
+	if not staggered:
+		return false
+	# Only when the enemy is pressed against a wall (short ray from their back).
+	return _enemy_pressed_to_wall(target)
+
+
+func _enemy_pressed_to_wall(target: Node3D) -> bool:
+	var space := get_world_3d().direct_space_state
+	var origin := target.global_position + Vector3.UP * 0.9
+	var away := target.global_position - global_position
+	away.y = 0.0
+	if away.is_zero_approx():
+		return false
+	var query := PhysicsRayQueryParameters3D.create(origin, origin + away.normalized() * 0.9, 1)
+	return not space.intersect_ray(query).is_empty()
+
+
+func _near_wall(from: Vector3) -> bool:
+	var space := get_world_3d().direct_space_state
+	for dir in [Vector3.FORWARD, Vector3.BACK, Vector3.LEFT, Vector3.RIGHT]:
+		var query := PhysicsRayQueryParameters3D.create(
+			from + Vector3.UP * 0.9, from + Vector3.UP * 0.9 + dir * WALL_CHECK, 1
+		)
+		if not space.intersect_ray(query).is_empty():
+			return true
+	return false
+
+
+func _best_grab_target() -> Node3D:
+	var forward := -visuals.global_basis.z
+	forward.y = 0.0
+	var best: Node3D
+	var best_score := INF
+	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if not is_instance_valid(enemy):
+			continue
+		var offset: Vector3 = enemy.global_position - global_position
+		offset.y = 0.0
+		var distance := offset.length()
+		if distance > FINISHER_RANGE or distance < 0.05:
+			continue
+		var angle := forward.angle_to(offset)
+		if angle > deg_to_rad(80.0):
+			continue
+		if not _has_los(enemy):
+			continue
+		var score := distance + angle * 1.5
+		if score < best_score:
+			best_score = score
+			best = enemy
+	return best
+
+
+func _has_los(enemy: Node3D) -> bool:
+	var space := get_world_3d().direct_space_state
+	var query := PhysicsRayQueryParameters3D.create(
+		global_position + Vector3.UP, enemy.global_position + Vector3.UP, 1
 	)
-	attack_hitbox.check_hits()
+	query.hit_from_inside = true
+	return space.intersect_ray(query).is_empty()
 
 
-## Adds rage outside of a rampage; the game calls this for kills.
+func _start_grab(target: Node3D, _move_direction: Vector3) -> void:
+	grab_target = target
+	grab_stabs = 0
+	_locked_iframes = true
+	if target.has_method("enter_grabbed"):
+		target.enter_grabbed(self)
+	_face_target(target)
+	_set_state(State.GRAB, true)
+	_sfx(&"grab", -2.0)
+
+
+func _handle_grab_input(can_act: bool, move_input: Vector2) -> void:
+	if not is_instance_valid(grab_target) or grab_target.get("is_alive") == false:
+		_release_grab(false)
+		_set_state(State.IDLE)
+		return
+	if state_time > 2.5:
+		_release_grab(false)
+		_set_state(State.IDLE)
+		return
+	if not can_act:
+		return
+	if Input.is_action_just_pressed("attack") and grab_stabs < 2:
+		_start_grab_stab()
+	elif Input.is_action_just_pressed("attack_heavy") and not move_input.is_zero_approx():
+		_start_throw(move_input)
+	elif Input.is_action_just_pressed("dodge"):
+		_release_grab(false)
+		_set_state(State.IDLE)
+
+
+func _start_grab_stab() -> void:
+	grab_stabs += 1
+	attack_kind = AttackKind.STAB
+	current_move = CombatAttackData.grab_stab()
+	heavy_attack = false
+	_configure_hitbox(current_move)
+	_locked_iframes = true
+	_set_state(State.ATTACK, true)
+	# Direct stab damage on hit frame (deterministic, no free-aim miss while locked).
+	var hit_at := _attack_time() * current_move.startup
+	get_tree().create_timer(hit_at).timeout.connect(_apply_grab_stab_damage, CONNECT_ONE_SHOT)
+
+
+func _apply_grab_stab_damage() -> void:
+	if attack_kind != AttackKind.STAB or not is_instance_valid(grab_target):
+		return
+	if state != State.ATTACK:
+		return
+	var event := HitEvent.from_move(current_move, self, global_position)
+	var hb := grab_target.get_node_or_null("Hurtbox") as Hurtbox
+	if hb:
+		hb.receive_hit(event)
+	BloodFx.spawn(get_tree(), grab_target.global_position + Vector3.UP * 0.9, -visuals.global_basis.z, event.blood_tier)
+	hit_stop_left = current_move.hit_stop
+	_kick_camera(current_move.camera_impulse)
+	_rumble(current_move.rumble_weak, current_move.rumble_strong, current_move.rumble_duration)
+	_sfx(&"heavy_hit")
+	hit_chain += 1
+	hit_chain_left = 2.0
+	hit_chain_changed.emit(hit_chain)
+	add_rage(rage_per_hit)
+
+
+func _start_throw(move_input: Vector2) -> void:
+	if not is_instance_valid(grab_target):
+		return
+	var dir := camera_pivot.global_basis * Vector3(move_input.x, 0.0, move_input.y)
+	dir.y = 0.0
+	dir = dir.normalized()
+	_set_state(State.THROW, true)
+	_sfx(&"throw", -2.0)
+	_kick_camera(2.0)
+	_rumble(0.35, 0.55, 0.15)
+	if grab_target.has_method("receive_throw"):
+		grab_target.receive_throw(dir * 14.0, self)
+	_release_grab(false)
+
+
+func _start_wall_slam(target: Node3D) -> void:
+	grab_target = target
+	_locked_iframes = true
+	current_move = CombatAttackData.wall_slam()
+	attack_kind = AttackKind.NONE
+	if target.has_method("enter_grabbed"):
+		target.enter_grabbed(self)
+	_face_target(target)
+	_configure_hitbox(current_move)
+	_set_state(State.WALL_SLAM, true)
+	_sfx(&"wall_slam", -1.0)
+	_kick_camera(2.6)
+	_rumble(0.5, 0.75, 0.22)
+	# Apply slam damage on "hit frame".
+	var hit_at := attack_duration * current_move.time * current_move.startup
+	await get_tree().create_timer(hit_at).timeout
+	if is_instance_valid(target) and state == State.WALL_SLAM:
+		var event := HitEvent.from_move(current_move, self, global_position)
+		event.blood_tier = CombatAttackData.BloodTier.WALL
+		if target.has_node("Hurtbox"):
+			(target.get_node("Hurtbox") as Hurtbox).receive_hit(event)
+		BloodFx.spawn(get_tree(), target.global_position + Vector3.UP, -visuals.global_basis.z, event.blood_tier)
+		_sfx(&"wall_impact", -2.0)
+
+
+func _start_finisher(target: Node3D) -> void:
+	grab_target = target
+	_locked_iframes = true
+	current_move = CombatAttackData.signature_finisher()
+	attack_kind = AttackKind.NONE
+	heavy_attack = false
+	if target.has_method("enter_grabbed"):
+		target.enter_grabbed(self)
+	_face_target(target)
+	_configure_hitbox(current_move)
+	_set_state(State.FINISHER, true)
+	_fov_punch = -12.0
+	_sfx(&"finisher_start", -1.0)
+	_kick_camera(2.8)
+	_rumble(0.4, 0.6, 0.2)
+	var hit_at := attack_duration * current_move.time * current_move.startup
+	# Real-time timer so brief kill slow-mo cannot soft-lock the finisher script.
+	var timer := get_tree().create_timer(hit_at, true, false, true)
+	await timer.timeout
+	if is_instance_valid(target) and state == State.FINISHER:
+		var event := HitEvent.from_move(current_move, self, global_position)
+		if target.has_node("Hurtbox"):
+			(target.get_node("Hurtbox") as Hurtbox).receive_hit(event)
+		BloodFx.spawn(get_tree(), target.global_position + Vector3.UP * 1.0, -visuals.global_basis.z, CombatAttackData.BloodTier.FINISHER)
+		hit_stop_left = current_move.hit_stop
+		_sfx(&"finisher_hit", 0.0)
+		_rumble(0.55, 0.9, 0.28)
+		CombatSlowMo.request(get_tree(), minf(current_move.kill_slow_mo, 0.12), 0.25)
+
+
+func _release_grab(killed: bool) -> void:
+	_locked_iframes = false
+	if is_instance_valid(grab_target) and grab_target.has_method("exit_grabbed"):
+		grab_target.exit_grabbed(killed)
+	grab_target = null
+	grab_stabs = 0
+	_fov_punch = 0.0
+
+
+func _sync_grab_target(delta: float) -> void:
+	if not is_instance_valid(grab_target):
+		if _locked_iframes and _is_locked_interaction():
+			_release_grab(false)
+			if state != State.DEAD:
+				_set_state(State.IDLE)
+		return
+	if state == State.GRAB or state == State.FINISHER or state == State.WALL_SLAM or (
+		state == State.ATTACK and attack_kind == AttackKind.STAB
+	):
+		var anchor := global_position - visuals.global_basis.z * 0.95
+		anchor.y = grab_target.global_position.y
+		grab_target.global_position = grab_target.global_position.lerp(anchor, 1.0 - exp(-18.0 * delta))
+		if grab_target.get("visuals") is Node3D:
+			var to_player := global_position - grab_target.global_position
+			to_player.y = 0.0
+			if not to_player.is_zero_approx():
+				(grab_target.visuals as Node3D).rotation.y = atan2(-to_player.x, -to_player.z)
+
+
+func _face_target(target: Node3D) -> void:
+	var offset := target.global_position - global_position
+	offset.y = 0.0
+	if not offset.is_zero_approx():
+		visuals.rotation.y = atan2(-offset.x, -offset.z)
+
+
 func add_rage(amount: float) -> void:
 	if raging or state == State.DEAD:
 		return
@@ -314,8 +674,8 @@ func add_rage(amount: float) -> void:
 	rage_changed.emit(rage, false)
 
 
-## Session checkpoint revive — restores combat readiness without reloading the scene.
 func revive(full_health: bool = true) -> void:
+	_release_grab(false)
 	if full_health:
 		health = max_health
 	rage_left = 0.0
@@ -327,79 +687,136 @@ func revive(full_health: bool = true) -> void:
 	lunge_velocity = Vector3.ZERO
 	combo_queued = false
 	heavy_attack = false
+	attack_kind = AttackKind.NONE
+	counter_window_left = 0.0
+	_locked_iframes = false
 	controls_enabled = true
 	hurtbox.enabled = true
 	hurtbox.collision_layer = 32
 	collision_layer = 2
 	collision_mask = 1
 	velocity = Vector3.ZERO
+	Engine.time_scale = 1.0
 	_set_state(State.IDLE, true)
 	_emit_health()
 	rage_changed.emit(rage, false)
 	hit_chain_changed.emit(0)
 
 
-func _current_move() -> Dictionary:
-	return HEAVY_ATTACK if heavy_attack else LIGHT_COMBO[combo_step]
+func _current_move() -> CombatAttackData:
+	return current_move if current_move else CombatAttackData.light_1()
 
 
 func _attack_time() -> float:
 	var speed := rage_speed_multiplier if raging else 1.0
-	return attack_duration * float(_current_move().time) / speed
+	return attack_duration * _current_move().time / speed
 
 
 func _start_light(step: int, move_direction: Vector3) -> void:
+	var lights := CombatAttackData.lights()
+	step = clampi(step, 0, lights.size() - 1)
 	heavy_attack = false
 	combo_step = step
 	combo_queued = false
-	_configure_hitbox(_current_move())
-	_aim_attack(move_direction)
+	current_move = lights[step]
+	attack_kind = [AttackKind.LIGHT_1, AttackKind.LIGHT_2, AttackKind.LIGHT_3][step]
+	_configure_hitbox(current_move)
+	_aim_attack(move_direction, current_move.magnetism)
 	_set_state(State.ATTACK, true)
 
 
-func _start_heavy(move_direction: Vector3) -> void:
+func _start_heavy_or_lunge(move_direction: Vector3, move_input: Vector2) -> void:
+	var target := _find_aim_target(move_direction, aim_assist_range, aim_assist_angle)
+	var dist := 0.0
+	if target:
+		dist = Vector3(target.global_position.x - global_position.x, 0.0, target.global_position.z - global_position.z).length()
+	var toward_enemy := target != null and dist >= LUNGE_MIN and dist <= LUNGE_MAX
+	var stick_held := not move_input.is_zero_approx()
 	heavy_attack = true
 	combo_step = 0
 	combo_queued = false
-	_configure_hitbox(HEAVY_ATTACK)
-	_aim_attack(move_direction)
+	# Lunge only when the stick is held toward a mid-range target (predatory gap-close).
+	if toward_enemy and stick_held:
+		current_move = CombatAttackData.lunge()
+		attack_kind = AttackKind.LUNGE
+		_configure_hitbox(current_move)
+		_aim_attack(move_direction, current_move.magnetism, true)
+	elif stick_held:
+		current_move = CombatAttackData.heavy_advance()
+		attack_kind = AttackKind.HEAVY
+		_configure_hitbox(current_move)
+		_aim_attack(move_direction, current_move.magnetism)
+	else:
+		current_move = CombatAttackData.heavy()
+		attack_kind = AttackKind.HEAVY
+		_configure_hitbox(current_move)
+		_aim_attack(move_direction, current_move.magnetism)
 	_set_state(State.ATTACK, true)
 
 
-func _configure_hitbox(move: Dictionary) -> void:
+func _start_counter(move_direction: Vector3) -> void:
+	counter_window_left = 0.0
+	heavy_attack = false
+	combo_step = 0
+	combo_queued = false
+	current_move = CombatAttackData.counter()
+	attack_kind = AttackKind.COUNTER
+	_configure_hitbox(current_move)
+	_aim_attack(move_direction, current_move.magnetism)
+	_set_state(State.ATTACK, true)
+	_sfx(&"counter", -1.0)
+
+
+func _configure_hitbox(move: CombatAttackData) -> void:
 	var damage_scale := rage_damage_multiplier if raging else 1.0
-	attack_hitbox.damage = roundi(float(move.damage) * damage_scale)
-	attack_hitbox.knockback = float(move.knockback)
-	attack_hitbox.hit_stop_duration = float(move.hit_stop)
+	attack_hitbox.configure_from_move(move, damage_scale)
 
 
-## Soft lock: snap the swing toward the best enemy in front and lunge into range.
-func _aim_attack(move_direction: Vector3) -> void:
-	lunge_velocity = Vector3.ZERO
+func _find_aim_target(move_direction: Vector3, range_m: float, angle_deg: float) -> Node3D:
 	var forward := move_direction.normalized() if not move_direction.is_zero_approx() else -visuals.global_basis.z
 	forward.y = 0.0
-	var best_offset := Vector3.ZERO
+	var best: Node3D
 	var best_score := INF
 	for enemy in get_tree().get_nodes_in_group("enemies"):
+		if not is_instance_valid(enemy):
+			continue
 		var offset: Vector3 = enemy.global_position - global_position
 		offset.y = 0.0
 		var distance := offset.length()
-		if distance > aim_assist_range or distance < 0.01:
+		if distance > range_m or distance < 0.01:
 			continue
 		var angle := forward.angle_to(offset)
-		if angle > deg_to_rad(aim_assist_angle):
+		if angle > deg_to_rad(angle_deg):
 			continue
-		# Prefer enemies near the stick direction, then the closest.
+		if not _has_los(enemy):
+			continue
 		var score := distance + angle * 2.0
 		if score < best_score:
 			best_score = score
-			best_offset = offset
-	if best_score == INF:
+			best = enemy
+	return best
+
+
+func _aim_attack(move_direction: Vector3, magnetism: float = 1.0, force_lunge: bool = false) -> void:
+	lunge_velocity = Vector3.ZERO
+	if magnetism <= 0.0:
 		return
-	visuals.rotation.y = atan2(-best_offset.x, -best_offset.z)
+	var forward := move_direction.normalized() if not move_direction.is_zero_approx() else -visuals.global_basis.z
+	forward.y = 0.0
+	var target := _find_aim_target(move_direction, aim_assist_range * magnetism, aim_assist_angle)
+	if target == null:
+		return
+	var best_offset: Vector3 = target.global_position - global_position
+	best_offset.y = 0.0
+	var desired_yaw := atan2(-best_offset.x, -best_offset.z)
+	var delta_yaw := wrapf(desired_yaw - visuals.rotation.y, -PI, PI)
+	# Soft magnetism — no 180° snaps.
+	visuals.rotation.y += clampf(delta_yaw, -max_magnet_yaw * magnetism, max_magnet_yaw * magnetism)
 	var gap := best_offset.length() - 1.1
-	if gap > 0.0 and lunge_time > 0.0:
-		lunge_velocity = best_offset.normalized() * minf(gap / lunge_time, max_lunge_speed)
+	var do_lunge := force_lunge or (gap > 0.35 and attack_kind == AttackKind.LUNGE)
+	if do_lunge and lunge_time > 0.0:
+		var close := clampf(gap, 0.0, LUNGE_MAX)
+		lunge_velocity = best_offset.normalized() * minf(close / lunge_time, max_lunge_speed)
 
 
 func _start_rage() -> void:
@@ -437,24 +854,58 @@ func _emit_health() -> void:
 		health_changed.emit(shown, max_health)
 
 
+func _update_hitbox_active() -> void:
+	var move := _current_move()
+	attack_hitbox.global_position = limbs[int(move.limb)].to_global(Vector3(0, -0.2, 0))
+	var swing := _attack_time()
+	var want_active := (
+		state == State.ATTACK
+		and state_time >= swing * move.startup
+		and state_time < swing * move.active_end
+	)
+	if want_active and not attack_hitbox.active and _trail == null:
+		_trail = SlashTrail.attach(limbs[int(move.limb)], move.strength)
+	elif not want_active and _trail:
+		_trail = null
+	attack_hitbox.set_active(want_active)
+	attack_hitbox.check_hits()
+
+
 func _set_state(next_state: State, force: bool = false) -> void:
 	if state == next_state and not force:
 		return
+	var leaving_attack := state == State.ATTACK and next_state != State.ATTACK
 	state = next_state
 	state_time = 0.0
 	attack_hitbox.set_active(false)
 	if state == State.ATTACK:
-		attack_hitbox.begin_swing(self)
+		attack_hitbox.begin_swing(self, current_move)
 		_sfx(&"swing", -4.0)
 	elif state == State.DODGE:
 		_sfx(&"dodge", -3.0)
-	elif state != State.ATTACK:
-		heavy_attack = false
-		combo_queued = false
+	elif leaving_attack and state != State.GRAB:
+		if state != State.THROW and state != State.WALL_SLAM and state != State.FINISHER:
+			heavy_attack = false
+			combo_queued = false
+			attack_kind = AttackKind.NONE
 	animator.speed_scale = 1.0
-	var animation: StringName = (
-		StringName(_current_move().animation) if state == State.ATTACK else ANIMATIONS[state]
-	)
+	var animation: StringName = ANIMATIONS[mini(int(state), ANIMATIONS.size() - 1)]
+	if state == State.ATTACK and current_move:
+		animation = current_move.animation
+	elif state == State.GRAB or state == State.THROW or state == State.WALL_SLAM or state == State.FINISHER:
+		animation = &"attack-melee-right"
+	elif state == State.IDLE:
+		animation = &"idle"
+	elif state == State.RUN:
+		animation = &"sprint"
+	elif state == State.DODGE:
+		animation = &"actions/dodge"
+	elif state == State.HURT:
+		animation = &"reactions/hit"
+	elif state == State.DEAD:
+		animation = &"die"
+	if not animator.has_animation(animation):
+		animation = &"idle"
 	var length := animator.get_animation(animation).length
 	var playback_speed := 1.0
 	match state:
@@ -466,32 +917,41 @@ func _set_state(next_state: State, force: bool = false) -> void:
 			playback_speed = length / hurt_duration
 		State.DEAD:
 			playback_speed = length / 0.6
+		State.GRAB:
+			playback_speed = 0.15
+		State.THROW:
+			playback_speed = length / 0.45
+		State.WALL_SLAM:
+			playback_speed = length / 1.0
+		State.FINISHER:
+			playback_speed = length / maxf(0.2, attack_duration * current_move.time)
 	var blend := 0.1
-	if state == State.DODGE or state == State.ATTACK or state == State.HURT:
+	if state == State.DODGE or state == State.ATTACK or state == State.HURT or _is_locked_interaction():
 		blend = 0.05
 	animator.play(animation, blend, playback_speed)
 	if force and animator.current_animation == animation:
-		# Replaying the same clip (a second hurt) must restart it.
 		animator.seek(0.0, true)
 	print(State.keys()[state])
 
 
-func _on_hurt(damage: int, source_position: Vector3, hit_stop: float, knockback: float) -> void:
-	if state == State.DEAD:
+func _on_hurt(event: HitEvent) -> void:
+	if state == State.DEAD or _locked_iframes:
 		return
-	health = maxf(0.0, health - damage)
+	_release_grab(false)
+	health = maxf(0.0, health - event.damage)
 	since_damage = 0.0
 	grace_left = hurt_duration + hurt_grace
 	combo_queued = false
 	heavy_attack = false
+	attack_kind = AttackKind.NONE
 	lunge_velocity = Vector3.ZERO
-	hit_stop_left = maxf(hit_stop_left, hit_stop)
+	hit_stop_left = maxf(hit_stop_left, event.hit_stop)
 	_kick_camera(2.4)
 	_rumble(0.5, 0.7, 0.2)
 	_sfx(&"hurt")
-	hurt.emit(damage)
+	hurt.emit(event.damage)
 	_emit_health()
-	var away := global_position - source_position
+	var away: Vector3 = global_position - event.source_position
 	away.y = 0.0
 	away = away.normalized()
 	if health <= 0.0:
@@ -500,42 +960,75 @@ func _on_hurt(damage: int, source_position: Vector3, hit_stop: float, knockback:
 		_set_state(State.DEAD)
 		died.emit()
 		return
-	knockback_velocity = Vector2(away.x, away.z) * knockback
+	knockback_velocity = Vector2(away.x, away.z) * event.knockback
 	if not away.is_zero_approx():
 		visuals.rotation.y = atan2(away.x, away.z)
 	_set_state(State.HURT, true)
 
 
 func _input(event: InputEvent) -> void:
-	# Rumble goes to whichever controller last attacked or dodged.
 	if (
 		event.is_action_pressed("attack")
 		or event.is_action_pressed("attack_heavy")
 		or event.is_action_pressed("dodge")
+		or event.is_action_pressed("grab")
 	):
 		if event is InputEventJoypadMotion or event is InputEventJoypadButton:
 			_attack_device = event.device
 
 
 func _on_hit_landed(contact_position: Vector3) -> void:
-	var finisher := heavy_attack or (not heavy_attack and combo_step == LIGHT_COMBO.size() - 1)
+	var move: CombatAttackData = current_move
+	var strength: int = move.strength if move else CombatAttackData.Strength.LIGHT
+	var event: HitEvent = attack_hitbox.last_hit_event
 	hit_stop_left = attack_hitbox.hit_stop_duration
-	_kick_camera(1.8 if finisher else 1.0)
+	_kick_camera(move.camera_impulse if move else 1.0)
 	var impact := HIT_IMPACT.instantiate()
-	impact.size = 1.8 if finisher else 1.0
+	impact.size = 1.8 if strength != CombatAttackData.Strength.LIGHT else 1.0
+	if strength == CombatAttackData.Strength.FINISHER:
+		impact.size = 2.4
 	get_tree().current_scene.add_child(impact)
 	impact.global_position = contact_position
-	_sfx(&"heavy_hit" if finisher else &"hit")
+	var blood: int = move.blood_tier if move else CombatAttackData.BloodTier.LIGHT_FLESH
+	if event:
+		blood = event.blood_tier
+	BloodFx.spawn(get_tree(), contact_position, -visuals.global_basis.z, blood)
+	match strength:
+		CombatAttackData.Strength.FINISHER:
+			_sfx(&"finisher_hit")
+		CombatAttackData.Strength.HEAVY, CombatAttackData.Strength.COUNTER:
+			_sfx(&"heavy_hit")
+		_:
+			_sfx(&"hit" if combo_step < 2 else &"heavy_hit")
+	if move:
+		_rumble(move.rumble_weak, move.rumble_strong, move.rumble_duration)
 	hit_chain += 1
 	hit_chain_left = 2.0
 	hit_chain_changed.emit(hit_chain)
 	add_rage(rage_per_hit)
-	if _attack_device >= 0:
-		_rumble(0.2 if finisher else 0.16, 0.35 if finisher else 0.24, 0.1 if finisher else 0.09)
+	if move and move.kill_slow_mo > 0.0:
+		_check_kill_slow_mo.call_deferred(contact_position, move.kill_slow_mo, strength)
+
+
+func _check_kill_slow_mo(contact: Vector3, duration: float, _strength: int) -> void:
+	var scene := get_tree().current_scene
+	if scene == null:
+		return
+	for body in scene.find_children("*", "CharacterBody3D", true, false):
+		if body == self or not is_instance_valid(body):
+			continue
+		if body.global_position.distance_to(contact) > 2.5:
+			continue
+		if body.get("is_alive") == false:
+			CombatSlowMo.request(get_tree(), duration, 0.22)
+			return
+		var hp: Variant = body.get("health")
+		if hp is int and int(hp) <= 0:
+			CombatSlowMo.request(get_tree(), duration, 0.22)
+			return
 
 
 func _rumble(weak: float, strong: float, duration: float) -> void:
-	# Unsupported/disconnected controllers simply receive no vibration request.
 	if _attack_device in Input.get_connected_joypads() and Input.has_joy_vibration(_attack_device):
 		_rumble_device = _attack_device
 		Input.start_joy_vibration(_rumble_device, weak, strong, duration)
@@ -547,7 +1040,6 @@ func _kick_camera(scale: float) -> void:
 
 
 func _sfx(sound: StringName, volume_db: float = 0.0, pitch_jitter: float = 0.06) -> void:
-	# Resolve by path so scripts compile even when preloaded before autoloads (tests).
 	var tree := get_tree()
 	if tree == null:
 		return
@@ -556,21 +1048,38 @@ func _sfx(sound: StringName, volume_db: float = 0.0, pitch_jitter: float = 0.06)
 		bus.play(sound, volume_db, pitch_jitter)
 
 
+func _update_debug_label() -> void:
+	if _debug_label == null:
+		return
+	var parts: PackedStringArray = []
+	if DebugCombat.state_label:
+		parts.append(State.keys()[state])
+		parts.append(AttackKind.keys()[attack_kind])
+	if DebugCombat.combo_label:
+		parts.append("c%d%s" % [combo_step, "Q" if combo_queued else ""])
+	_debug_label.text = " ".join(parts)
+
+
 func _process(delta: float) -> void:
 	camera_impulse_left = maxf(0.0, camera_impulse_left - delta)
 	var elapsed := camera_impulse_duration - camera_impulse_left
 	var strength := camera_impulse_strength * _impulse_scale * pow(camera_impulse_left / camera_impulse_duration, 2.0)
-	# Small lens offsets leave orbit angles and the spring arm's position untouched.
 	camera.h_offset = sin(elapsed * 90.0) * strength
 	camera.v_offset = cos(elapsed * 70.0) * strength * 0.65
+	var target_fov := _fov_base + _fov_punch
+	camera.fov = lerpf(camera.fov, target_fov, 1.0 - exp(-8.0 * delta))
 	if raging:
 		_overlay.albedo_color = Color(1.0, 0.12, 0.05, 0.28 + 0.1 * sin(Time.get_ticks_msec() * 0.02))
 	elif grace_left > 0.0 and state != State.DEAD:
 		_overlay.albedo_color = Color(1, 1, 1, 0.45 if fmod(grace_left, 0.12) > 0.06 else 0.0)
+	elif health / max_health < 0.35:
+		_overlay.albedo_color = Color(0.7, 0.05, 0.05, 0.12)
 	else:
 		_overlay.albedo_color = Color(1, 1, 1, 0)
 
 
 func _exit_tree() -> void:
+	_release_grab(false)
+	Engine.time_scale = 1.0
 	if _rumble_device in Input.get_connected_joypads():
 		Input.stop_joy_vibration(_rumble_device)

@@ -2,18 +2,21 @@ class_name MusicController
 extends Node
 
 ## Simple looped bed crossfades: EXPLORATION / COMBAT / FINAL_COMBAT / MISSION_COMPLETE.
-## Beds are synthesized at runtime (no audio assets).
+## Intensity accents: COMBAT_LOW / COMBAT_HIGH / FINAL — duck/boost without rewriting beds.
 
 enum Bed { SILENCE, EXPLORATION, COMBAT, FINAL_COMBAT, MISSION_COMPLETE }
+enum Intensity { NONE, COMBAT_LOW, COMBAT_HIGH, FINAL }
 
 const RATE := 22050
 const CROSSFADE := 1.1
 
 var current: Bed = Bed.SILENCE
+var intensity: Intensity = Intensity.NONE
 var _players: Array[AudioStreamPlayer] = []
 var _streams: Dictionary = {}
 var _active_index: int = 0
 var _fade_tween: Tween
+var _base_db: float = -14.0
 
 
 func _ready() -> void:
@@ -43,10 +46,31 @@ func set_bed(bed: Bed, immediate: bool = false) -> void:
 	if immediate:
 		_players[_active_index].volume_db = -80.0
 		_players[_active_index].stop()
-		_players[next].volume_db = -14.0
+		_players[next].volume_db = _base_db
 		_active_index = next
+		_apply_intensity_db()
 		return
 	_fade_cross(_active_index, next)
+
+
+## Accent combat beds: LOW softer, HIGH hotter, FINAL hottest. Call from mission phases.
+func set_intensity(level: Intensity) -> void:
+	intensity = level
+	_apply_intensity_db()
+
+
+func _apply_intensity_db() -> void:
+	match intensity:
+		Intensity.COMBAT_LOW:
+			_base_db = -16.0
+		Intensity.COMBAT_HIGH:
+			_base_db = -12.0
+		Intensity.FINAL:
+			_base_db = -10.0
+		_:
+			_base_db = -14.0
+	if current != Bed.SILENCE:
+		_players[_active_index].volume_db = _base_db
 
 
 func _fade_cross(from_i: int, to_i: int) -> void:
@@ -56,7 +80,7 @@ func _fade_cross(from_i: int, to_i: int) -> void:
 	_fade_tween = create_tween()
 	_fade_tween.set_parallel(true)
 	_fade_tween.tween_property(_players[from_i], "volume_db", -80.0, CROSSFADE)
-	_fade_tween.tween_property(_players[to_i], "volume_db", -14.0, CROSSFADE)
+	_fade_tween.tween_property(_players[to_i], "volume_db", _base_db, CROSSFADE)
 	_fade_tween.chain().tween_callback(func() -> void:
 		_players[from_i].stop()
 		_active_index = to_i

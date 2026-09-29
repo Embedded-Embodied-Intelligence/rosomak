@@ -77,6 +77,10 @@ rage={
 "deadzone": 0.5,
 "events": [Object(InputEventJoypadButton,"device":-1,"button_index":3), Object(InputEventKey,"device":-1,"physical_keycode":81)]
 }
+grab={
+"deadzone": 0.5,
+"events": [Object(InputEventJoypadMotion,"device":-1,"axis":4,"axis_value":1.0), Object(InputEventKey,"device":-1,"physical_keycode":76), Object(InputEventMouseButton,"device":-1,"button_index":3)]
+}
 pause={
 "deadzone": 0.5,
 "events": [Object(InputEventJoypadButton,"device":-1,"button_index":6), Object(InputEventKey,"device":-1,"physical_keycode":4194305)]

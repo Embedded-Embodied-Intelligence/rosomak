@@ -149,21 +149,27 @@ func _on_phase_changed(phase: MissionController.Phase, _previous: MissionControl
 		MissionController.Phase.ENCOUNTER_01:
 			objectives.show_objective("CLEAR THE WAREHOUSE")
 			music.set_bed(MusicController.Bed.COMBAT)
+			music.set_intensity(MusicController.Intensity.COMBAT_LOW)
 		MissionController.Phase.TRANSITION_01:
 			objectives.show_objective("PROCEED INTO RESEARCH")
 			music.set_bed(MusicController.Bed.EXPLORATION)
+			music.set_intensity(MusicController.Intensity.NONE)
 		MissionController.Phase.AMBUSH:
 			objectives.show_objective("SURVIVE THE BREACH")
 			music.set_bed(MusicController.Bed.COMBAT)
+			music.set_intensity(MusicController.Intensity.COMBAT_HIGH)
 		MissionController.Phase.ENCOUNTER_02:
 			objectives.show_objective("SECURE THE LAB")
+			music.set_intensity(MusicController.Intensity.COMBAT_HIGH)
 		MissionController.Phase.TRANSITION_02:
 			objectives.show_objective("GO DEEPER")
 			music.set_bed(MusicController.Bed.EXPLORATION)
+			music.set_intensity(MusicController.Intensity.NONE)
 			_activate_emergency()
 		MissionController.Phase.FINAL_ENCOUNTER:
 			objectives.show_objective("DESTROY ALL HOSTILES")
 			music.set_bed(MusicController.Bed.FINAL_COMBAT)
+			music.set_intensity(MusicController.Intensity.FINAL)
 		MissionController.Phase.MISSION_COMPLETE:
 			music.set_bed(MusicController.Bed.MISSION_COMPLETE)
 

@@ -46,8 +46,10 @@ var kills: int = 0
 func _process(delta: float) -> void:
 	if not mission_running:
 		return
-	phase_time += delta
-	mission_elapsed += delta
+	# Unscaled clock so brief combat kill slow-mo does not stall mission timers.
+	var real_delta := delta / maxf(Engine.time_scale, 0.05)
+	phase_time += real_delta
+	mission_elapsed += real_delta
 
 
 func start_mission() -> void:
