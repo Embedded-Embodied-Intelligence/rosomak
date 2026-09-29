@@ -7,6 +7,8 @@ extends CharacterBody3D
 
 signal died(enemy: Enemy)
 
+const CharacterAnimLib := preload("res://scripts/combat/character_anim.gd")
+
 enum State { SPAWN, CHASE, WINDUP, STRIKE, RECOVER, STAGGER, DEAD, CHEER, GRABBED, THROWN }
 enum DeathStyle { COLLAPSE, KNOCKDOWN, LAUNCH, WALL, FINISHER }
 
@@ -63,6 +65,7 @@ var _throw_velocity := Vector3.ZERO
 var _wall_bonus_used: bool = false
 var _death_style: DeathStyle = DeathStyle.COLLAPSE
 var _last_hit_strength: int = CombatAttackData.Strength.LIGHT
+var _last_hit_away := Vector3.FORWARD
 var _overlay := StandardMaterial3D.new()
 var _bar_material := ShaderMaterial.new()
 var _bar: MeshInstance3D
@@ -100,12 +103,17 @@ func _ready() -> void:
 	_setup_health_bar()
 
 	animator.callback_mode_process = AnimationMixer.ANIMATION_CALLBACK_MODE_PROCESS_MANUAL
-	animator.add_animation_library(&"reactions", preload("res://animations/enemy_reactions.tres"))
+	if animator.has_animation_library(&"reactions"):
+		animator.remove_animation_library(&"reactions")
+	animator.add_animation_library(&"reactions", CharacterAnimLib.build_reactions())
 	animator.get_animation(&"walk").loop_mode = Animation.LOOP_LINEAR
 	animator.get_animation(&"emote-yes").loop_mode = Animation.LOOP_LINEAR
+	if animator.has_animation(&"sprint"):
+		animator.get_animation(&"sprint").loop_mode = Animation.LOOP_LINEAR
 	animator.play(&"idle")
 	visuals.scale = Vector3.ONE * body_scale * 0.2
 	_face(_to_target(), 1.0)
+	_apply_variant_silhouette()
 	if DebugCombat.stagger_label:
 		_debug_label = Label3D.new()
 		_debug_label.position = Vector3(0, 2.4 * body_scale, 0)
@@ -132,7 +140,8 @@ func _apply_body_scale() -> void:
 func _setup_materials() -> void:
 	var material := StandardMaterial3D.new()
 	material.albedo_color = body_color
-	material.roughness = 1.0
+	material.roughness = 0.85 if is_heavy else 0.95
+	material.metallic = 0.18 if is_heavy else 0.02
 	_overlay.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_overlay.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_overlay.albedo_color = Color(1, 1, 1, 0)
@@ -187,7 +196,8 @@ func enter_grabbed(grabber: Node3D) -> void:
 	state_time = 0.0
 	knockback_velocity = Vector2.ZERO
 	_throw_velocity = Vector3.ZERO
-	animator.play(&"reactions/hit", 0.05, 0.1)
+	var hold := &"reactions/stagger" if animator.has_animation(&"reactions/stagger") else &"reactions/hit"
+	animator.play(hold, 0.05, 0.12)
 	hurtbox.enabled = true
 
 
@@ -239,7 +249,7 @@ func _physics_process(delta: float) -> void:
 		knockback_velocity = knockback_velocity.move_toward(Vector2.ZERO, 12.0 * delta)
 		if state == State.CHASE:
 			var ground_speed := Vector2(get_real_velocity().x, get_real_velocity().z).length()
-			animator.speed_scale = clampf(ground_speed / move_animation_speed, 0.4, 2.0)
+			animator.speed_scale = clampf(ground_speed / maxf(0.5, move_animation_speed), 0.45, 1.6)
 		animator.advance(delta)
 
 	if state != State.GRABBED and state != State.THROWN:
@@ -357,18 +367,21 @@ func _enter(next_state: State) -> void:
 		State.CHASE:
 			animator.play(move_animation, 0.15)
 		State.WINDUP:
-			animator.play(attack_animation, 0.1)
-			animator.speed_scale = animator.get_animation(attack_animation).length * 0.4 / windup_time
+			animator.play(attack_animation, 0.12)
+			# Stretch the early portion of the clip for readable anticipation.
+			animator.speed_scale = animator.get_animation(attack_animation).length * 0.35 / windup_time
 			_sfx(&"telegraph", -8.0)
 		State.STRIKE:
 			attack_hitbox.begin_swing(self)
-			animator.speed_scale = animator.get_animation(attack_animation).length * 0.6 / strike_time
+			animator.speed_scale = animator.get_animation(attack_animation).length * 0.55 / strike_time
+			animator.seek(animator.get_animation(attack_animation).length * 0.35, true)
 			_sfx(&"swing", -9.0)
 		State.RECOVER:
 			attack_cooldown = randf_range(cooldown_range.x, cooldown_range.y)
 			animator.play(&"idle", 0.2)
 		State.STAGGER:
-			animator.play(&"reactions/hit", 0.03, 0.24 / stagger_duration)
+			var react := &"reactions/stagger" if animator.has_animation(&"reactions/stagger") else &"reactions/hit"
+			animator.play(react, 0.04, animator.get_animation(react).length / maxf(0.12, stagger_duration))
 			animator.seek(0.0, true)
 		State.CHEER:
 			animator.play(&"emote-yes", 0.3)
@@ -411,7 +424,9 @@ func _receive_hit(event: HitEvent) -> void:
 	knockback_velocity = push
 	if not away.is_zero_approx():
 		visuals.rotation.y = atan2(away.x, away.z)
+	_last_hit_away = away
 	_enter(State.STAGGER)
+	_play_hit_reaction(away, event.attack_strength != CombatAttackData.Strength.LIGHT)
 
 
 func _apply_damage_only(event: HitEvent) -> void:
@@ -455,17 +470,20 @@ func _die(push: Vector2) -> void:
 	match _death_style:
 		DeathStyle.LAUNCH:
 			knockback_velocity = push * 2.2
-			animator.play(&"die", 0.04, animator.get_animation(&"die").length / 0.45)
+			if animator.has_animation(&"reactions/death_launch"):
+				animator.play(&"reactions/death_launch", 0.03, 1.0)
+			else:
+				animator.play(&"die", 0.04, animator.get_animation(&"die").length / 0.45)
 		DeathStyle.WALL, DeathStyle.FINISHER:
 			knockback_velocity = push * 0.4
-			animator.play(&"die", 0.02, animator.get_animation(&"die").length / 0.7)
+			animator.play(&"die", 0.02, animator.get_animation(&"die").length / 0.75)
 			BloodFx.spawn(get_tree(), global_position + Vector3.UP, Vector3.UP, CombatAttackData.BloodTier.DEATH)
 		DeathStyle.KNOCKDOWN:
 			knockback_velocity = push * 1.8
-			animator.play(&"die", 0.04, animator.get_animation(&"die").length / 0.55)
+			animator.play(&"die", 0.04, animator.get_animation(&"die").length / 0.5)
 		_:
 			knockback_velocity = push * 1.2
-			animator.play(&"die", 0.04, animator.get_animation(&"die").length / 0.55)
+			animator.play(&"die", 0.05, animator.get_animation(&"die").length / 0.55)
 	_bar.visible = false
 	animator.speed_scale = 1.0
 	_sfx(&"enemy_die", -2.0)
@@ -547,6 +565,70 @@ func _release_slot() -> void:
 	if _has_slot:
 		attackers -= 1
 		_has_slot = false
+
+
+func _play_hit_reaction(away: Vector3, heavy: bool) -> void:
+	var local := visuals.global_basis.inverse() * away
+	local.y = 0.0
+	var anim := CharacterAnimLib.hit_name(local, heavy)
+	if not animator.has_animation(anim):
+		anim = &"reactions/hit"
+	var length := animator.get_animation(anim).length
+	animator.play(anim, 0.03, length / maxf(0.12, stagger_duration))
+	animator.seek(0.0, true)
+
+
+func _apply_variant_silhouette() -> void:
+	## Cheap silhouette props — no cloth/IK. Differentiates light / standard / heavy.
+	if visuals.get_node_or_null("SilhouetteProps"):
+		return
+	var props := Node3D.new()
+	props.name = "SilhouetteProps"
+	visuals.add_child(props)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = body_color.darkened(0.25)
+	mat.roughness = 0.7
+	mat.metallic = 0.25 if is_heavy else 0.05
+	if is_heavy or body_scale >= 1.2:
+		for side in [-1.0, 1.0]:
+			var pad := MeshInstance3D.new()
+			var box := BoxMesh.new()
+			box.size = Vector3(0.22, 0.14, 0.28)
+			pad.mesh = box
+			pad.material_override = mat
+			pad.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+			pad.position = Vector3(side * 0.38, 1.35, 0.05)
+			props.add_child(pad)
+		var helm := MeshInstance3D.new()
+		var helm_mesh := BoxMesh.new()
+		helm_mesh.size = Vector3(0.36, 0.16, 0.38)
+		helm.mesh = helm_mesh
+		helm.material_override = mat
+		helm.position = Vector3(0.0, 1.72, 0.02)
+		props.add_child(helm)
+	elif body_scale <= 0.9:
+		var pack := MeshInstance3D.new()
+		var pack_mesh := BoxMesh.new()
+		pack_mesh.size = Vector3(0.28, 0.32, 0.14)
+		pack.mesh = pack_mesh
+		pack.material_override = mat
+		pack.position = Vector3(0.0, 1.15, -0.22)
+		props.add_child(pack)
+		var ant := MeshInstance3D.new()
+		var ant_mesh := BoxMesh.new()
+		ant_mesh.size = Vector3(0.04, 0.28, 0.04)
+		ant.mesh = ant_mesh
+		ant.material_override = mat
+		ant.position = Vector3(0.1, 1.7, -0.05)
+		props.add_child(ant)
+	else:
+		var vest := MeshInstance3D.new()
+		var vest_mesh := BoxMesh.new()
+		vest_mesh.size = Vector3(0.42, 0.36, 0.12)
+		vest.mesh = vest_mesh
+		vest.material_override = mat
+		vest.position = Vector3(0.0, 1.15, 0.16)
+		props.add_child(vest)
 
 
 func _exit_tree() -> void:
