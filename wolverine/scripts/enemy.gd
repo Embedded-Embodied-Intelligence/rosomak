@@ -158,8 +158,9 @@ func can_be_grabbed() -> bool:
 	if state == State.DEAD or state == State.SPAWN or state == State.GRABBED:
 		return false
 	if grab_resist_unless_staggered or is_heavy:
-		return state == State.STAGGER or stagger_build >= stagger_threshold * 0.85
-	return state != State.WINDUP and state != State.STRIKE
+		return state == State.STAGGER or stagger_build >= stagger_threshold * 0.7
+	# Lights: allow grab outside active strike frames for reliability.
+	return state != State.STRIKE
 
 
 func is_staggered() -> bool:
@@ -169,11 +170,11 @@ func is_staggered() -> bool:
 func is_finisher_ready() -> bool:
 	if state == State.DEAD or state == State.SPAWN:
 		return false
-	if float(health) / float(max_health) <= 0.22:
+	if float(health) / float(max_health) <= 0.35:
 		return true
-	if stagger_build >= stagger_threshold and state == State.STAGGER:
+	if stagger_build >= stagger_threshold * 0.85 and (state == State.STAGGER or state == State.RECOVER):
 		return true
-	if is_heavy and health <= int(max_health * 0.35) and state == State.STAGGER:
+	if is_heavy and health <= int(max_health * 0.45) and state == State.STAGGER:
 		return true
 	return false
 
@@ -261,18 +262,19 @@ func _check_wall_impact() -> void:
 		var col := get_slide_collision(i)
 		if col.get_collider() is StaticBody3D or col.get_collider() is CSGShape3D:
 			_wall_bonus_used = true
-			var event := HitEvent.legacy(22, global_position - col.get_normal(), 0.1, 2.0)
+			var event := HitEvent.legacy(28, global_position - col.get_normal(), 0.12, 3.2)
 			event.attack_strength = CombatAttackData.Strength.HEAVY
 			event.blood_tier = CombatAttackData.BloodTier.WALL
 			event.source_move_id = &"wall_throw"
-			event.stagger_bonus = 50.0
+			event.stagger_bonus = 60.0
 			_apply_damage_only(event)
 			BloodFx.spawn(get_tree(), global_position + Vector3.UP * 0.9, col.get_normal(), CombatAttackData.BloodTier.WALL)
-			_sfx(&"wall_impact", -2.0)
+			BloodFx.spawn(get_tree(), global_position + Vector3.UP * 0.5, -col.get_normal(), CombatAttackData.BloodTier.HEAVY_FLESH)
+			_sfx(&"wall_impact", 0.0)
 			stagger_build = stagger_threshold
 			if health <= 0:
 				_death_style = DeathStyle.WALL
-				_die(Vector2(-col.get_normal().x, -col.get_normal().z) * 4.0)
+				_die(Vector2(-col.get_normal().x, -col.get_normal().z) * 5.0)
 			else:
 				_enter(State.STAGGER)
 			_throw_velocity = Vector3.ZERO
@@ -549,3 +551,7 @@ func _release_slot() -> void:
 
 func _exit_tree() -> void:
 	_release_slot()
+	# Softlock safeguard: living enemies freed without _die still notify directors.
+	if state != State.DEAD:
+		state = State.DEAD
+		died.emit(self)

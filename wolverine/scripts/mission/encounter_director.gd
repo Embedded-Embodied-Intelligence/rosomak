@@ -28,6 +28,7 @@ var _intro_left: float = 0.0
 var _active_encounter: StringName = &""
 var _alive_by_encounter: Dictionary = {}
 var _pending_intro: Callable = Callable()
+var _finished_encounters: Dictionary = {} ## encounter_id -> bool
 
 
 func setup(mission_controller: MissionController, root: Node3D, player_ref: Player, spawn_entries: Array) -> void:
@@ -43,6 +44,9 @@ func setup(mission_controller: MissionController, root: Node3D, player_ref: Play
 
 
 func _process(delta: float) -> void:
+	# Softlock safeguard: reconcile bookkeeping against real living enemies.
+	if not _active_encounter.is_empty():
+		_reconcile_and_maybe_finish()
 	if _queue.is_empty():
 		return
 	if _intro_left > 0.0:
@@ -62,6 +66,7 @@ func begin_encounter(encounter_id: StringName, waves: Array, max_active_override
 	## type: &"grunt" | &"runner" | &"brute"
 	_active_encounter = encounter_id
 	_alive_by_encounter[encounter_id] = 0
+	_finished_encounters.erase(encounter_id)
 	if mission:
 		mission.encounter_alive[encounter_id] = 0
 	if max_active_override > 0:
@@ -90,9 +95,17 @@ func clear_all() -> void:
 	_queue.clear()
 	_intro_left = 0.0
 	for child in enemies_root.get_children():
+		# Mark dead before free so _exit_tree does not re-emit died into a cleared book.
+		if child is Enemy and child.state != Enemy.State.DEAD:
+			child.state = Enemy.State.DEAD
+			child.remove_from_group("enemies")
 		child.queue_free()
 	_alive_by_encounter.clear()
+	_finished_encounters.clear()
+	_active_encounter = &""
 	Enemy.attackers = 0
+	if mission:
+		mission.encounter_alive.clear()
 
 
 func _spawn_enemy(job: Dictionary) -> void:
@@ -141,24 +154,91 @@ func _on_enemy_died(enemy: Enemy) -> void:
 	var encounter_id: StringName = enemy.get_meta("encounter_id", _active_encounter)
 	_alive_by_encounter[encounter_id] = maxi(0, int(_alive_by_encounter.get(encounter_id, 0)) - 1)
 	mission.notify_enemy_died(encounter_id)
-	if int(_alive_by_encounter.get(encounter_id, 0)) == 0 and _queue.is_empty():
-		encounter_finished.emit(encounter_id)
+	_debug_encounter(encounter_id, "enemy_died")
+	_try_finish(encounter_id)
 
 
 func _count_alive() -> int:
 	var total := 0
 	for child in enemies_root.get_children():
-		if child is Enemy and child.state != Enemy.State.DEAD:
+		if child is Enemy and is_instance_valid(child) and child.state != Enemy.State.DEAD:
 			total += 1
 	return total
 
 
+func _count_alive_in(encounter_id: StringName) -> int:
+	var total := 0
+	if enemies_root == null:
+		return 0
+	for child in enemies_root.get_children():
+		if not (child is Enemy) or not is_instance_valid(child):
+			continue
+		if child.state == Enemy.State.DEAD:
+			continue
+		if child.get_meta("encounter_id", _active_encounter) != encounter_id:
+			continue
+		total += 1
+	return total
+
+
 func alive_in(encounter_id: StringName) -> int:
-	return int(_alive_by_encounter.get(encounter_id, 0))
+	# Prefer scene truth so removed/unreachable orphans cannot softlock.
+	return _count_alive_in(encounter_id)
 
 
 func has_pending() -> bool:
-	return not _queue.is_empty()
+	return not _queue.is_empty() or _intro_left > 0.0
+
+
+func _try_finish(encounter_id: StringName) -> void:
+	if encounter_id.is_empty():
+		return
+	if _finished_encounters.get(encounter_id, false):
+		return
+	if has_pending():
+		return
+	var living := _count_alive_in(encounter_id)
+	_alive_by_encounter[encounter_id] = living
+	if mission:
+		mission.encounter_alive[encounter_id] = living
+	if living > 0:
+		return
+	_finished_encounters[encounter_id] = true
+	_debug_encounter(encounter_id, "encounter_finished")
+	encounter_finished.emit(encounter_id)
+	if _active_encounter == encounter_id:
+		_active_encounter = &""
+
+
+func _reconcile_and_maybe_finish() -> void:
+	var encounter_id := _active_encounter
+	if encounter_id.is_empty():
+		return
+	# Drop invalid / freed children that never emitted died.
+	var tracked := int(_alive_by_encounter.get(encounter_id, 0))
+	var living := _count_alive_in(encounter_id)
+	if living != tracked:
+		_alive_by_encounter[encounter_id] = living
+		if mission:
+			mission.encounter_alive[encounter_id] = living
+		_debug_encounter(encounter_id, "reconcile living=%d tracked_was=%d" % [living, tracked])
+	if living == 0 and not has_pending():
+		_try_finish(encounter_id)
+
+
+func _debug_encounter(encounter_id: StringName, reason: String) -> void:
+	if not OS.is_debug_build():
+		return
+	print(
+		"[Encounter] %s id=%s remaining=%d pending=%s queue=%d"
+		% [
+			reason,
+			String(encounter_id),
+			_count_alive_in(encounter_id),
+			str(has_pending()),
+			_queue.size(),
+		]
+	)
 
 
 func _scene_for(type_name: StringName) -> PackedScene:

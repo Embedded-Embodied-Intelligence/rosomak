@@ -67,6 +67,8 @@ func _ready() -> void:
 	player.hurt.connect(hud.flash_hurt)
 	player.died.connect(_on_player_died)
 	player.attack_hitbox.hit_landed.connect(_on_player_hit_landed)
+	player.context_prompt_changed.connect(hud.set_context_prompt)
+	player.tutorial_requested.connect(hud.show_tutorial)
 	hud.set_health(player.max_health, player.max_health)
 	hud.set_rage(0.0, false)
 	hud.pause_allowed = true
@@ -362,6 +364,7 @@ func _on_encounter_finished(encounter_id: StringName) -> void:
 			_sfx(&"clear", -2.0, 0.0)
 			_activate_emergency()
 		&"final":
+			_open_final_doors()
 			mission.set_phase(MissionController.Phase.MISSION_COMPLETE)
 
 
@@ -410,6 +413,14 @@ func _update_emergency_flicker() -> void:
 		_sfx(&"spark", -8.0, 0.1)
 
 
+func _open_final_doors() -> void:
+	for door_id in [&"door_final_in", &"door_final_a", &"door_final_b", &"door_final_c"]:
+		if builder.doors.has(door_id):
+			builder.doors[door_id].request_open()
+	if OS.is_debug_build():
+		print("[Mission] final doors unlocked remaining=%d" % director.alive_in(&"final"))
+
+
 func _safety_door_unlock() -> void:
 	if mission.phase >= MissionController.Phase.TRANSITION_01 and builder.doors[&"door_warehouse_out"].state == MissionDoor.State.LOCKED:
 		if mission.is_encounter_clear(&"e1") or not _e1_started:
@@ -419,6 +430,17 @@ func _safety_door_unlock() -> void:
 			builder.doors[&"door_lab_out"].request_open()
 	if mission.phase >= MissionController.Phase.FINAL_ENCOUNTER and builder.doors[&"door_final_in"].state == MissionDoor.State.LOCKED:
 		builder.doors[&"door_final_in"].request_open()
+	# Softlock: every living final enemy gone + empty spawn queue must unlock and complete.
+	if (
+		mission.phase == MissionController.Phase.FINAL_ENCOUNTER
+		and not _finished_encounters.get(&"final", false)
+		and not director.has_pending()
+		and director.alive_in(&"final") == 0
+		and _final_started
+	):
+		_on_encounter_finished(&"final")
+	elif mission.phase == MissionController.Phase.MISSION_COMPLETE:
+		_open_final_doors()
 
 
 func _update_hud_counts() -> void:
