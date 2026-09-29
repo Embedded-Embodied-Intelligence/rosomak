@@ -33,6 +33,10 @@ var _chain_tween: Tween
 var _hurt: float = 0.0
 var _health_ratio: float = 1.0
 var _hint_time: float = 0.0
+var _context_label: Label
+var _tutorial_label: Label
+var _tutorial_tween: Tween
+var _context_root: Control
 
 
 func _ready() -> void:
@@ -87,6 +91,28 @@ func _ready() -> void:
 	_chain_label.offset_right = -40
 	_chain_label.modulate.a = 0.0
 	root.add_child(_chain_label)
+
+	# Contextual action prompt (bottom-center).
+	_context_root = Control.new()
+	_context_root.set_anchors_preset(Control.PRESET_CENTER_BOTTOM)
+	_context_root.offset_top = -90
+	_context_root.offset_bottom = -50
+	_context_root.offset_left = -220
+	_context_root.offset_right = 220
+	root.add_child(_context_root)
+	_context_label = _label("", 22, ACCENT, HORIZONTAL_ALIGNMENT_CENTER)
+	_context_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_context_label.modulate.a = 0.0
+	_context_root.add_child(_context_label)
+
+	_tutorial_label = _label("", 26, Color(1.0, 0.92, 0.65), HORIZONTAL_ALIGNMENT_CENTER)
+	_tutorial_label.set_anchors_preset(Control.PRESET_CENTER_TOP)
+	_tutorial_label.offset_top = 96
+	_tutorial_label.offset_bottom = 140
+	_tutorial_label.offset_left = -320
+	_tutorial_label.offset_right = 320
+	_tutorial_label.modulate.a = 0.0
+	root.add_child(_tutorial_label)
 
 	var center := _full_rect(CenterContainer.new())
 	center.offset_bottom = -90
@@ -199,8 +225,8 @@ func show_title() -> void:
 	banner(
 		"ROSOMAK",
 		"Trzecioosobowy claw-fighter · jedna arena · jedna fala\n\n"
-		+ "Pad:  LS ruch · RS kamera · RT lekkie (3×) · RB ciężkie · A unik · Y szał · Start pauza\n"
-		+ "Klawiatura:  WASD · mysz / strzałki · J / LPM lekki · K / PPM ciężki · Spacja unik · Q szał · Esc pauza",
+		+ "Pad:  LS ruch · RS kamera · RT lekki (3×) · RB ciężki · LT chwyt/finisz · A unik · Y szał\n"
+		+ "Klawiatura:  WASD · mysz · J lekki · K ciężki · L chwyt · Spacja unik · Q szał · Esc pauza",
 		0.0,
 		"A / Enter — start · B / Esc — wyjście",
 		110
@@ -258,6 +284,27 @@ func show_mission_complete(kills: int, time_text: String) -> void:
 		"A / Enter — Replay · B / Esc — Exit",
 		88
 	)
+
+
+func set_context_prompt(text: String) -> void:
+	if _context_label == null:
+		return
+	_context_label.text = text
+	var target_a := 1.0 if not text.is_empty() else 0.0
+	var tw := create_tween()
+	tw.tween_property(_context_label, "modulate:a", target_a, 0.12)
+
+
+func show_tutorial(text: String, duration: float = 2.6) -> void:
+	if _tutorial_label == null or text.is_empty():
+		return
+	_tutorial_label.text = text
+	if _tutorial_tween:
+		_tutorial_tween.kill()
+	_tutorial_tween = create_tween()
+	_tutorial_tween.tween_property(_tutorial_label, "modulate:a", 1.0, 0.18)
+	_tutorial_tween.tween_interval(duration)
+	_tutorial_tween.tween_property(_tutorial_label, "modulate:a", 0.0, 0.45)
 
 
 func clear_banner() -> void:

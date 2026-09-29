@@ -9,6 +9,7 @@ static var target_cone: bool = false
 static var state_label: bool = false
 static var combo_label: bool = false
 static var stagger_label: bool = false
+static var encounter_label: bool = false
 
 
 static func enabled_in_build() -> bool:
@@ -17,7 +18,7 @@ static func enabled_in_build() -> bool:
 
 static func any() -> bool:
 	return enabled_in_build() and (
-		hitboxes or hurtboxes or target_cone or state_label or combo_label or stagger_label
+		hitboxes or hurtboxes or target_cone or state_label or combo_label or stagger_label or encounter_label
 	)
 
 
@@ -30,6 +31,7 @@ static func reset_release() -> void:
 	state_label = false
 	combo_label = false
 	stagger_label = false
+	encounter_label = false
 
 
 func _ready() -> void:

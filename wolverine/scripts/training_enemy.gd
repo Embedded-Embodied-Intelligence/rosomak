@@ -55,7 +55,7 @@ func is_staggered() -> bool:
 
 
 func is_finisher_ready() -> bool:
-	return state != State.DEAD and float(health) / float(max_health) <= 0.22
+	return state != State.DEAD and float(health) / float(max_health) <= 0.35
 
 
 func enter_grabbed(_grabber: Node3D) -> void:

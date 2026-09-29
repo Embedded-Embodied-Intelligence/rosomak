@@ -34,6 +34,10 @@ func _ready() -> void:
 	player.rage_changed.connect(hud.set_rage)
 	player.hit_chain_changed.connect(hud.set_hit_chain)
 	player.hurt.connect(hud.flash_hurt)
+	if player.has_signal("context_prompt_changed"):
+		player.context_prompt_changed.connect(hud.set_context_prompt)
+	if player.has_signal("tutorial_requested"):
+		player.tutorial_requested.connect(hud.show_tutorial)
 	player.died.connect(_on_player_died)
 	hud.set_health(player.max_health, player.max_health)
 	hud.set_rage(0.0, false)

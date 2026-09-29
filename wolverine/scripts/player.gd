@@ -20,11 +20,12 @@ const ANIMATIONS: Array[StringName] = [
 const HIT_IMPACT := preload("res://scenes/hit_impact.tscn")
 const RAGE_MAX := 100.0
 const COUNTER_WINDOW := 0.6
-const GRAB_RANGE := 1.55
-const FINISHER_RANGE := 1.85
+const GRAB_RANGE := 1.85
+const FINISHER_RANGE := 2.15
 const LUNGE_MIN := 2.0
 const LUNGE_MAX := 4.2
 const WALL_CHECK := 1.35
+const FINISHER_HP_RATIO := 0.35
 
 @export var move_speed: float = 5.0
 @export var acceleration: float = 24.0
@@ -96,6 +97,12 @@ var _shown_health: int = 0
 var _overlay := StandardMaterial3D.new()
 var _claw_material := StandardMaterial3D.new()
 var _debug_label: Label3D
+var _attack_held_prev: bool = false
+var _grab_held_prev: bool = false
+var _context_prompt: String = ""
+var _tutorials_shown: Dictionary = {} ## StringName -> bool
+signal context_prompt_changed(text: String)
+signal tutorial_requested(text: String)
 
 var is_invulnerable: bool:
 	get:
@@ -150,27 +157,88 @@ func _ready() -> void:
 
 
 func _apply_claw_fighter_look() -> void:
-	var body := StandardMaterial3D.new()
-	body.albedo_color = Color(0.12, 0.13, 0.15)
-	body.roughness = 0.85
-	body.metallic = 0.05
-	_claw_material.albedo_color = Color(0.78, 0.82, 0.88)
-	_claw_material.metallic = 0.95
-	_claw_material.roughness = 0.28
+	## Bold comic-book yellow/blue claw-fighter silhouette (original, fan-inspired).
+	var yellow := StandardMaterial3D.new()
+	yellow.albedo_color = Color(0.92, 0.78, 0.12)
+	yellow.roughness = 0.55
+	yellow.metallic = 0.08
+	var blue := StandardMaterial3D.new()
+	blue.albedo_color = Color(0.12, 0.28, 0.72)
+	blue.roughness = 0.5
+	blue.metallic = 0.12
+	var black := StandardMaterial3D.new()
+	black.albedo_color = Color(0.06, 0.06, 0.08)
+	black.roughness = 0.7
+	_claw_material.albedo_color = Color(0.82, 0.86, 0.92)
+	_claw_material.metallic = 0.98
+	_claw_material.roughness = 0.18
 	_claw_material.emission_enabled = true
-	_claw_material.emission = Color(0.35, 0.45, 0.55)
-	_claw_material.emission_energy_multiplier = 0.35
+	_claw_material.emission = Color(0.45, 0.55, 0.7)
+	_claw_material.emission_energy_multiplier = 0.55
 	_overlay.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 	_overlay.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	_overlay.albedo_color = Color(1, 1, 1, 0)
 	for mesh in $Visuals/Humanoid.find_children("*", "MeshInstance3D", true, false):
-		mesh.material_override = body
+		var n := String(mesh.name).to_lower()
+		var mat := yellow
+		if "leg" in n or "boot" in n or "foot" in n:
+			mat = blue
+		elif "arm" in n or "hand" in n:
+			mat = yellow
+		elif "head" in n or "hair" in n:
+			mat = black
+		elif "torso" in n or "body" in n or "chest" in n:
+			mat = yellow
+		mesh.material_override = mat
 		mesh.material_overlay = _overlay
+	_attach_mask_fins()
 	_attach_claws(limbs[0])
 	_attach_claws(limbs[1])
+	# Uniform visual scale only — never scale Visuals non-uniformly (Jolt hitbox child).
+	# Muscular read via torso mesh scale (Humanoid child, not physics).
+	var torso: Node3D = $Visuals/Humanoid.find_child("torso", true, false)
+	if torso:
+		torso.scale = Vector3(1.14, 1.06, 1.12)
+
+
+func _attach_mask_fins() -> void:
+	var head: Node3D = $Visuals/Humanoid.find_child("head", true, false)
+	if head == null:
+		head = $Visuals/Humanoid.find_child("Head", true, false)
+	if head == null:
+		return
+	if head.get_node_or_null("MaskFins"):
+		return
+	var fins := Node3D.new()
+	fins.name = "MaskFins"
+	head.add_child(fins)
+	fins.position = Vector3(0.0, 0.12, -0.02)
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.04, 0.04, 0.06)
+	mat.roughness = 0.65
+	for side in [-1.0, 1.0]:
+		var fin := MeshInstance3D.new()
+		var box := BoxMesh.new()
+		box.size = Vector3(0.06, 0.28, 0.1)
+		fin.mesh = box
+		fin.material_override = mat
+		fin.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		fin.position = Vector3(side * 0.16, 0.18, -0.04)
+		fin.rotation_degrees = Vector3(-18.0, side * 22.0, side * 12.0)
+		fins.add_child(fin)
+	# Brow / mask plate for stronger head silhouette.
+	var brow := MeshInstance3D.new()
+	var brow_mesh := BoxMesh.new()
+	brow_mesh.size = Vector3(0.32, 0.08, 0.14)
+	brow.mesh = brow_mesh
+	brow.material_override = mat
+	brow.position = Vector3(0.0, 0.1, 0.08)
+	fins.add_child(brow)
 
 
 func _attach_claws(hand: Node3D) -> void:
+	if hand.get_node_or_null("Claws"):
+		return
 	var claws := Node3D.new()
 	claws.name = "Claws"
 	hand.add_child(claws)
@@ -178,12 +246,12 @@ func _attach_claws(hand: Node3D) -> void:
 	for i in 3:
 		var blade := MeshInstance3D.new()
 		var box := BoxMesh.new()
-		box.size = Vector3(0.035, 0.42, 0.02)
+		box.size = Vector3(0.04, 0.52, 0.025)
 		blade.mesh = box
 		blade.material_override = _claw_material
 		blade.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		blade.position = Vector3((i - 1) * 0.045, -0.12, 0.0)
-		blade.rotation_degrees = Vector3(8.0, 0.0, (i - 1) * 6.0)
+		blade.position = Vector3((i - 1) * 0.05, -0.16, 0.02)
+		blade.rotation_degrees = Vector3(10.0, 0.0, (i - 1) * 8.0)
 		claws.add_child(blade)
 
 
@@ -195,6 +263,9 @@ func _unhandled_input(event: InputEvent) -> void:
 func _physics_process(delta: float) -> void:
 	var stopped := hit_stop_left > 0.0
 	hit_stop_left = maxf(0.0, hit_stop_left - delta)
+	# Track analog edges even during hit-stop so RT/LT don't "stick" after freeze.
+	var attack_edge := _poll_action_edge("attack", true)
+	var grab_edge := _poll_action_edge("grab", false)
 	if not stopped:
 		state_time += delta
 	dodge_cooldown_left = maxf(0.0, dodge_cooldown_left - delta)
@@ -229,8 +300,9 @@ func _physics_process(delta: float) -> void:
 	var move_direction := camera_pivot.global_basis * Vector3(loco_input.x, 0.0, loco_input.y)
 	var resume_state := State.RUN if not loco_input.is_zero_approx() else State.IDLE
 
-	_update_action_states(can_act, move_input, move_direction, resume_state)
-	_try_start_actions(can_act, loco_input, move_direction)
+	_update_action_states(can_act, move_input, move_direction, resume_state, attack_edge)
+	_try_start_actions(can_act, loco_input, move_direction, attack_edge, grab_edge)
+	_update_context_prompt()
 
 	var target_velocity := move_direction * move_speed
 	var rate := deceleration if loco_input.is_zero_approx() else acceleration
@@ -286,12 +358,23 @@ func _physics_process(delta: float) -> void:
 	_update_debug_label()
 
 
+func _poll_action_edge(action: StringName, is_attack: bool) -> bool:
+	## Analog triggers (RT/LT) rarely fully release; track strength edges past deadzone.
+	var held := Input.is_action_pressed(action)
+	var prev := _attack_held_prev if is_attack else _grab_held_prev
+	if is_attack:
+		_attack_held_prev = held
+	else:
+		_grab_held_prev = held
+	return held and not prev
+
+
 func _is_locked_interaction() -> bool:
 	return state == State.GRAB or state == State.THROW or state == State.WALL_SLAM or state == State.FINISHER
 
 
 func _update_action_states(
-	can_act: bool, move_input: Vector2, move_direction: Vector3, resume_state: State
+	can_act: bool, move_input: Vector2, move_direction: Vector3, resume_state: State, attack_edge: bool = false
 ) -> void:
 	if state == State.DODGE:
 		_poll_dodge_counter()
@@ -300,11 +383,11 @@ func _update_action_states(
 			velocity.z = move_direction.z * move_speed
 			_set_state(resume_state)
 	elif state == State.ATTACK:
-		_handle_attack_cancel(can_act, move_direction, resume_state)
+		_handle_attack_cancel(can_act, move_direction, resume_state, attack_edge)
 	elif state == State.HURT and state_time >= hurt_duration:
 		_set_state(resume_state)
 	elif state == State.GRAB:
-		_handle_grab_input(can_act, move_input)
+		_handle_grab_input(can_act, move_input, attack_edge)
 	elif state == State.THROW and state_time >= 0.45:
 		_release_grab(false)
 		_set_state(resume_state)
@@ -316,16 +399,20 @@ func _update_action_states(
 		_set_state(resume_state)
 
 
-func _handle_attack_cancel(can_act: bool, move_direction: Vector3, resume_state: State) -> void:
+func _handle_attack_cancel(
+	can_act: bool, move_direction: Vector3, resume_state: State, attack_edge: bool = false
+) -> void:
 	var swing_time := _attack_time()
 	var move := current_move
 	var in_active := state_time >= swing_time * move.startup and state_time < swing_time * move.active_end
-	# Buffer next light during combo window; never cancel mid-active into another attack.
-	if (
-		can_act and attack_kind >= AttackKind.LIGHT_1 and attack_kind <= AttackKind.LIGHT_3
-		and Input.is_action_just_pressed("attack")
+	var in_combo_window := (
+		attack_kind >= AttackKind.LIGHT_1 and attack_kind <= AttackKind.LIGHT_3
 		and combo_step < 2 and state_time >= swing_time * move.combo_window
-	):
+	)
+	# Buffer next light during combo window; never cancel mid-active into another attack.
+	# Accept both just_pressed and our analog edge so RT mash/hold-release works on pad.
+	var light_press := attack_edge or Input.is_action_just_pressed("attack")
+	if can_act and in_combo_window and light_press:
 		combo_queued = true
 	if can_act and move.can_dodge_cancel_late and not in_active and state_time >= swing_time * move.cancel_window:
 		if Input.is_action_just_pressed("dodge") and dodge_cooldown_left <= 0.0:
@@ -345,11 +432,15 @@ func _handle_attack_cancel(can_act: bool, move_direction: Vector3, resume_state:
 			_set_state(resume_state)
 
 
-func _try_start_actions(can_act: bool, move_input: Vector2, move_direction: Vector3) -> void:
+func _try_start_actions(
+	can_act: bool, move_input: Vector2, move_direction: Vector3, attack_edge: bool = false, grab_edge: bool = false
+) -> void:
 	if not can_act:
 		return
+	var light_press := attack_edge or Input.is_action_just_pressed("attack")
+	var grab_press := grab_edge or Input.is_action_just_pressed("grab")
 	# Counter window: RT during post-dodge window.
-	if counter_window_left > 0.0 and Input.is_action_just_pressed("attack") and (
+	if counter_window_left > 0.0 and light_press and (
 		state == State.IDLE or state == State.RUN or state == State.DODGE
 	):
 		_start_counter(move_direction)
@@ -363,11 +454,11 @@ func _try_start_actions(can_act: bool, move_input: Vector2, move_direction: Vect
 			dodge_direction = move_direction.normalized() if not move_input.is_zero_approx() else -visuals.global_basis.z
 			dodge_cooldown_left = dodge_duration + dodge_cooldown
 			_set_state(State.DODGE)
-		elif Input.is_action_just_pressed("grab"):
+		elif grab_press:
 			_try_contextual_grab(move_direction)
 		elif Input.is_action_just_pressed("attack_heavy"):
 			_start_heavy_or_lunge(move_direction, move_input)
-		elif Input.is_action_just_pressed("attack"):
+		elif light_press:
 			_start_light(0, move_direction)
 	if can_act and Input.is_action_just_pressed("rage") and rage >= RAGE_MAX and not raging:
 		_start_rage()
@@ -395,6 +486,7 @@ func _try_contextual_grab(move_direction: Vector3) -> void:
 		return
 	# Signature finisher when eligible.
 	if _finisher_eligible(target):
+		_offer_tutorial(&"finisher", "LT - Finish vulnerable enemy")
 		_start_finisher(target)
 		return
 	# Wall slam when staggered near wall.
@@ -404,11 +496,17 @@ func _try_contextual_grab(move_direction: Vector3) -> void:
 	if not _grab_eligible(target):
 		_sfx(&"grab_resist", -4.0)
 		return
+	_offer_tutorial(&"grab", "LT - Grab nearby enemy")
 	_start_grab(target, move_direction)
 
 
 func _grab_eligible(target: Node3D) -> bool:
 	if not is_instance_valid(target) or target.get("is_alive") == false:
+		return false
+	var distance := Vector3(
+		target.global_position.x - global_position.x, 0.0, target.global_position.z - global_position.z
+	).length()
+	if distance > GRAB_RANGE:
 		return false
 	if target.has_method("can_be_grabbed"):
 		return target.can_be_grabbed()
@@ -418,12 +516,17 @@ func _grab_eligible(target: Node3D) -> bool:
 func _finisher_eligible(target: Node3D) -> bool:
 	if not is_instance_valid(target):
 		return false
+	var distance := Vector3(
+		target.global_position.x - global_position.x, 0.0, target.global_position.z - global_position.z
+	).length()
+	if distance > FINISHER_RANGE:
+		return false
 	if target.has_method("is_finisher_ready"):
 		return target.is_finisher_ready()
 	var hp: Variant = target.get("health")
 	var max_hp: Variant = target.get("max_health")
 	if hp is int and max_hp is int and max_hp > 0:
-		return float(hp) / float(max_hp) <= 0.22
+		return float(hp) / float(max_hp) <= FINISHER_HP_RATIO
 	return false
 
 
@@ -477,11 +580,11 @@ func _best_grab_target() -> Node3D:
 		if distance > FINISHER_RANGE or distance < 0.05:
 			continue
 		var angle := forward.angle_to(offset)
-		if angle > deg_to_rad(80.0):
+		if angle > deg_to_rad(95.0):
 			continue
 		if not _has_los(enemy):
 			continue
-		var score := distance + angle * 1.5
+		var score := distance + angle * 1.35
 		if score < best_score:
 			best_score = score
 			best = enemy
@@ -506,23 +609,29 @@ func _start_grab(target: Node3D, _move_direction: Vector3) -> void:
 	_face_target(target)
 	_set_state(State.GRAB, true)
 	_sfx(&"grab", -2.0)
+	_offer_tutorial(&"grab_follow", "RT - Stab   RB - Throw")
 
 
-func _handle_grab_input(can_act: bool, move_input: Vector2) -> void:
+func _handle_grab_input(can_act: bool, move_input: Vector2, attack_edge: bool = false) -> void:
 	if not is_instance_valid(grab_target) or grab_target.get("is_alive") == false:
 		_release_grab(false)
 		_set_state(State.IDLE)
 		return
-	if state_time > 2.5:
+	if state_time > 3.2:
 		_release_grab(false)
 		_set_state(State.IDLE)
 		return
 	if not can_act:
 		return
-	if Input.is_action_just_pressed("attack") and grab_stabs < 2:
+	var stab_press := attack_edge or Input.is_action_just_pressed("attack")
+	if stab_press and grab_stabs < 2:
 		_start_grab_stab()
-	elif Input.is_action_just_pressed("attack_heavy") and not move_input.is_zero_approx():
-		_start_throw(move_input)
+	elif Input.is_action_just_pressed("attack_heavy"):
+		# Allow throw even with neutral stick — use facing as fallback.
+		var throw_stick := move_input
+		if throw_stick.is_zero_approx():
+			throw_stick = Vector2(0.0, -1.0)
+		_start_throw(throw_stick)
 	elif Input.is_action_just_pressed("dodge"):
 		_release_grab(false)
 		_set_state(State.IDLE)
@@ -566,13 +675,15 @@ func _start_throw(move_input: Vector2) -> void:
 		return
 	var dir := camera_pivot.global_basis * Vector3(move_input.x, 0.0, move_input.y)
 	dir.y = 0.0
+	if dir.is_zero_approx():
+		dir = -visuals.global_basis.z
 	dir = dir.normalized()
 	_set_state(State.THROW, true)
-	_sfx(&"throw", -2.0)
-	_kick_camera(2.0)
-	_rumble(0.35, 0.55, 0.15)
+	_sfx(&"throw", -1.0)
+	_kick_camera(2.4)
+	_rumble(0.4, 0.65, 0.18)
 	if grab_target.has_method("receive_throw"):
-		grab_target.receive_throw(dir * 14.0, self)
+		grab_target.receive_throw(dir * 16.0, self)
 	_release_grab(false)
 
 
@@ -1058,6 +1169,31 @@ func _update_debug_label() -> void:
 	if DebugCombat.combo_label:
 		parts.append("c%d%s" % [combo_step, "Q" if combo_queued else ""])
 	_debug_label.text = " ".join(parts)
+
+
+func _update_context_prompt() -> void:
+	var next := ""
+	if state == State.GRAB:
+		next = "RT - STAB   RB - THROW"
+	elif state == State.IDLE or state == State.RUN:
+		var target := _best_grab_target()
+		if target != null:
+			if _finisher_eligible(target):
+				next = "LT - FINISH"
+				_offer_tutorial(&"finisher_prompt", "LT - Finish vulnerable enemy")
+			elif _grab_eligible(target):
+				next = "LT - GRAB"
+				_offer_tutorial(&"grab_prompt", "LT - Grab nearby enemy")
+	if next != _context_prompt:
+		_context_prompt = next
+		context_prompt_changed.emit(_context_prompt)
+
+
+func _offer_tutorial(id: StringName, text: String) -> void:
+	if _tutorials_shown.get(id, false):
+		return
+	_tutorials_shown[id] = true
+	tutorial_requested.emit(text)
 
 
 func _process(delta: float) -> void:

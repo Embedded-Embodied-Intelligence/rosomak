@@ -79,27 +79,27 @@ static func make(
 ## Canonical player moveset — tuned for Xbox RT light / RB heavy claw feel.
 static func light_1() -> CombatAttackData:
 	return make(
-		&"light_1", 20, 0.85, 0.38, 0.56, 0.30, 0.70, 0.045, 2.2,
+		&"light_1", 20, 0.85, 0.42, 0.58, 0.28, 0.70, 0.05, 2.4,
 		Strength.LIGHT, BloodTier.LIGHT_FLESH, &"attack-melee-right", 0,
-		{magnetism = 0.85, camera_impulse = 0.9}
+		{magnetism = 0.9, camera_impulse = 1.0, rumble_weak = 0.18, rumble_strong = 0.26}
 	)
 
 
 static func light_2() -> CombatAttackData:
 	return make(
-		&"light_2", 25, 0.95, 0.36, 0.55, 0.28, 0.68, 0.055, 2.8,
+		&"light_2", 26, 0.92, 0.34, 0.54, 0.22, 0.64, 0.065, 3.1,
 		Strength.LIGHT, BloodTier.LIGHT_FLESH, &"attack-melee-left", 1,
-		{magnetism = 0.9, camera_impulse = 1.1, rumble_strong = 0.28}
+		{magnetism = 0.95, camera_impulse = 1.3, rumble_weak = 0.22, rumble_strong = 0.34, rumble_duration = 0.11}
 	)
 
 
 static func light_3() -> CombatAttackData:
 	return make(
-		&"light_3", 35, 1.15, 0.34, 0.58, 0.40, 0.78, 0.085, 4.2,
+		&"light_3", 38, 1.12, 0.32, 0.58, 0.45, 0.78, 0.1, 4.8,
 		Strength.LIGHT, BloodTier.HEAVY_FLESH, &"attack-melee-right", 0,
 		{
-			magnetism = 1.0, camera_impulse = 1.9, rumble_weak = 0.28, rumble_strong = 0.45,
-			rumble_duration = 0.14, kill_slow_mo = 0.14, can_dodge_cancel_late = true
+			magnetism = 1.05, camera_impulse = 2.1, rumble_weak = 0.32, rumble_strong = 0.5,
+			rumble_duration = 0.16, kill_slow_mo = 0.14, can_dodge_cancel_late = true
 		}
 	)
 
@@ -148,11 +148,11 @@ static func counter() -> CombatAttackData:
 
 static func grab_stab() -> CombatAttackData:
 	return make(
-		&"grab_stab", 30, 1.1, 0.35, 0.48, 1.0, 0.9, 0.12, 1.0,
+		&"grab_stab", 34, 1.0, 0.28, 0.45, 1.0, 0.88, 0.14, 1.2,
 		Strength.HEAVY, BloodTier.HEAVY_FLESH, &"attack-melee-right", 0,
 		{
-			magnetism = 0.0, camera_impulse = 2.0, rumble_weak = 0.45, rumble_strong = 0.7,
-			rumble_duration = 0.2, can_dodge_cancel_late = false
+			magnetism = 0.0, camera_impulse = 2.3, rumble_weak = 0.5, rumble_strong = 0.8,
+			rumble_duration = 0.22, can_dodge_cancel_late = false
 		}
 	)
 
