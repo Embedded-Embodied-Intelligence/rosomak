@@ -174,7 +174,7 @@ func flash_hurt(_damage: int) -> void:
 
 
 func set_wave(wave: int) -> void:
-	_wave_label.text = "FALA %d" % wave
+	_wave_label.text = "ARENA" if wave <= 1 else "FALA %d" % wave
 
 
 func set_counts(remaining: int, kills: int) -> void:
@@ -199,26 +199,34 @@ func banner(title: String, subtitle: String = "", duration: float = 2.2, hint: S
 		_banner_tween.tween_property(_banner_box, "modulate:a", 0.0, 0.4)
 
 
-func show_title(best_wave: int) -> void:
-	var record := "Rekord: fala %d" % best_wave if best_wave > 0 else "Przetrwaj jak najwięcej fal"
+func show_title() -> void:
 	banner(
 		"ROSOMAK",
-		"%s\n\nPad:  LS ruch · RS kamera · RT cios (3× combo) · A unik · Y szał · Start pauza\n"
-		% record
-		+ "Klawiatura:  WASD · mysz / strzałki · LPM lub J cios · Spacja unik · Q szał · Esc pauza",
+		"Trzecioosobowy claw-fighter · jedna arena · jedna fala\n\n"
+		+ "Pad:  LS ruch · RS kamera · RT lekkie (3×) · RB ciężkie · A unik · Y szał · Start pauza\n"
+		+ "Klawiatura:  WASD · mysz / strzałki · J / LPM lekki · K / PPM ciężki · Spacja unik · Q szał · Esc pauza",
 		0.0,
-		"Naciśnij A / Enter, aby walczyć",
+		"A / Enter — start · B / Esc — wyjście",
 		110
 	)
 
 
-func show_game_over(wave: int, kills: int, best_wave: int, new_record: bool) -> void:
-	var record := "NOWY REKORD!" if new_record else "Rekord: fala %d" % best_wave
+func show_victory(kills: int) -> void:
+	banner(
+		"AREA CLEAR",
+		"Arena oczyszczona · pokonani: %d" % kills,
+		0.0,
+		"A / Enter — Restart · B / Esc — Exit",
+		96
+	)
+
+
+func show_game_over(kills: int) -> void:
 	banner(
 		"POLEGŁEŚ",
-		"Dotarłeś do fali %d · pokonani: %d\n%s" % [wave, kills, record],
+		"Pokonani: %d" % kills,
 		0.0,
-		"Naciśnij A / Enter, aby spróbować ponownie",
+		"A / Enter — Restart · B / Esc — Exit",
 		96
 	)
 

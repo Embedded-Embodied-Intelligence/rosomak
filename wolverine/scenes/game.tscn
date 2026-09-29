@@ -222,8 +222,9 @@ mesh = SubResource("Mesh_gate")
 [node name="NorthGlow" type="OmniLight3D" parent="Gates"]
 position = Vector3(0.0, 1.8, -14.700000000000001)
 light_color = Color(1, 0.35, 0.15, 1)
-light_energy = 1.6
-omni_range = 7.0
+light_energy = 0.9
+omni_range = 5.0
+shadow_enabled = false
 
 [node name="North" type="Marker3D" parent="SpawnPoints"]
 position = Vector3(0, 0, -14)
@@ -237,8 +238,9 @@ mesh = SubResource("Mesh_gate")
 [node name="SouthGlow" type="OmniLight3D" parent="Gates"]
 position = Vector3(0.0, 1.8, 14.700000000000001)
 light_color = Color(1, 0.35, 0.15, 1)
-light_energy = 1.6
-omni_range = 7.0
+light_energy = 0.9
+omni_range = 5.0
+shadow_enabled = false
 
 [node name="South" type="Marker3D" parent="SpawnPoints"]
 position = Vector3(0, 0, 14)
@@ -252,8 +254,9 @@ mesh = SubResource("Mesh_gate")
 [node name="WestGlow" type="OmniLight3D" parent="Gates"]
 position = Vector3(-14.700000000000001, 1.8, 0.0)
 light_color = Color(1, 0.35, 0.15, 1)
-light_energy = 1.6
-omni_range = 7.0
+light_energy = 0.9
+omni_range = 5.0
+shadow_enabled = false
 
 [node name="West" type="Marker3D" parent="SpawnPoints"]
 position = Vector3(-14, 0, 0)
@@ -267,8 +270,9 @@ mesh = SubResource("Mesh_gate")
 [node name="EastGlow" type="OmniLight3D" parent="Gates"]
 position = Vector3(14.700000000000001, 1.8, 0.0)
 light_color = Color(1, 0.35, 0.15, 1)
-light_energy = 1.6
-omni_range = 7.0
+light_energy = 0.9
+omni_range = 5.0
+shadow_enabled = false
 
 [node name="East" type="Marker3D" parent="SpawnPoints"]
 position = Vector3(14, 0, 0)
